@@ -124,6 +124,10 @@ SQLLAB_CTAS_NO_LIMIT = True
 log_level_text = os.getenv("SUPERSET_LOG_LEVEL", "INFO")
 LOG_LEVEL = getattr(logging, log_level_text.upper(), logging.INFO)
 
+# Disable Talisman security headers & CSRF for local dev server (port 9000 proxying)
+TALISMAN_ENABLED = False
+WTF_CSRF_ENABLED = False
+
 if os.getenv("CYPRESS_CONFIG") == "true":
     # When running the service as a cypress backend, we need to import the config
     # located @ tests/integration_tests/superset_test_config.py
