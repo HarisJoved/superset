@@ -2647,10 +2647,12 @@ TALISMAN_CONFIG = {
             # "https://cdn.brandfolder.io", # Uncomment when SLACK_ENABLE_AVATARS is True  # noqa: E501
             "ows.terrestris.de",
             "https://cdn.document360.io",
+            "https://raw.githubusercontent.com",
         ],
         "worker-src": ["'self'", "blob:"],
         "connect-src": [
             "'self'",
+            "https://raw.githubusercontent.com",
             "https://api.mapbox.com",
             "https://events.mapbox.com",
             "https://tile.openstreetmap.org",
@@ -2694,10 +2696,12 @@ TALISMAN_DEV_CONFIG = {
             "https://cdn.brandfolder.io",
             "ows.terrestris.de",
             "https://cdn.document360.io",
+            "https://raw.githubusercontent.com",
         ],
         "worker-src": ["'self'", "blob:"],
         "connect-src": [
             "'self'",
+            "https://raw.githubusercontent.com",
             "https://api.mapbox.com",
             "https://events.mapbox.com",
             "https://tile.openstreetmap.org",
