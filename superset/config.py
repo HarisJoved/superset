@@ -2642,6 +2642,8 @@ TALISMAN_CONFIG = {
             "'self'",
             "blob:",
             "data:",
+            "https://idtsolutions-my.sharepoint.com",
+            "https://home.snap4idtcity.com",
             "https://apachesuperset.gateway.scarf.sh",
             "https://static.scarf.sh/",
             # "https://cdn.brandfolder.io", # Uncomment when SLACK_ENABLE_AVATARS is True  # noqa: E501
@@ -2652,6 +2654,9 @@ TALISMAN_CONFIG = {
         "worker-src": ["'self'", "blob:"],
         "connect-src": [
             "'self'",
+            "blob:",
+            "https://idtsolutions-my.sharepoint.com",
+            "https://home.snap4idtcity.com",
             "https://raw.githubusercontent.com",
             "https://api.mapbox.com",
             "https://events.mapbox.com",
@@ -2691,6 +2696,8 @@ TALISMAN_DEV_CONFIG = {
             "'self'",
             "blob:",
             "data:",
+            "https://idtsolutions-my.sharepoint.com",
+            "https://home.snap4idtcity.com",
             "https://apachesuperset.gateway.scarf.sh",
             "https://static.scarf.sh/",
             "https://cdn.brandfolder.io",
@@ -2701,6 +2708,9 @@ TALISMAN_DEV_CONFIG = {
         "worker-src": ["'self'", "blob:"],
         "connect-src": [
             "'self'",
+            "blob:",
+            "https://idtsolutions-my.sharepoint.com",
+            "https://home.snap4idtcity.com",
             "https://raw.githubusercontent.com",
             "https://api.mapbox.com",
             "https://events.mapbox.com",
