@@ -35,6 +35,8 @@ x-superset-volumes: &superset-volumes
   - ./tests:/app/tests
   - superset_data:/app/data
   - ./local_extensions:/app/local_extensions
+x-superset-networks: &superset-networks
+  - s4idtcities
 x-common-build: &common-build
   context: .
   target: ${SUPERSET_BUILD_TARGET:-dev} # can use `dev` (default) or `lean`
@@ -56,7 +58,7 @@ services:
     image: nginx:latest
     restart: unless-stopped
     ports:
-      - "${NGINX_PORT:-80}:80"
+      - "${NGINX_PORT:-8090}:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -91,28 +93,6 @@ services:
         echo "Webpack dev server is ready; starting nginx."
         exec /docker-entrypoint.sh nginx -g 'daemon off;'
 
-  redis:
-    image: redis:7
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis:/data
-
-  db:
-    env_file:
-      - path: docker/.env # default
-        required: true
-      - path: docker/.env-local # optional override
-        required: false
-    image: postgres:17
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${DATABASE_PORT:-5432}:5432"
-    volumes:
-      - db_home:/var/lib/postgresql/data
-      - ./docker/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
-
   superset:
     env_file:
       - path: docker/.env # default
@@ -134,6 +114,9 @@ services:
       superset-init:
         condition: service_completed_successfully
     volumes: *superset-volumes
+    networks:
+      - s4idtcities
+
 
   superset-websocket:
     build: ./superset-websocket
@@ -141,8 +124,6 @@ services:
       - ${WEBSOCKET_PORT:-8080}:8080
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      - redis
     # Mount everything in superset-websocket into container and
     # then exclude node_modules and dist with bogus volume mount.
     # This is necessary because host and container need to have
@@ -165,24 +146,21 @@ services:
       - PORT=8080
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=R3d!s#2026@IDT
       - REDIS_SSL=false
+    networks: *superset-networks
 
   superset-init:
     build:
       <<: *common-build
-    command: ["/app/docker/docker-init.sh"]
     env_file:
       - path: docker/.env # default
         required: true
       - path: docker/.env-local # optional override
         required: false
-    depends_on:
-      db:
-        condition: service_started
-      redis:
-        condition: service_started
     user: *superset-user
     volumes: *superset-volumes
+    networks: *superset-networks
     healthcheck:
       disable: true
 
@@ -207,7 +185,7 @@ services:
       # Webpack dev server must bind to 0.0.0.0 to be accessible from outside the container
       WEBPACK_DEVSERVER_HOST: "0.0.0.0"
     ports:
-      - "127.0.0.1:${NODE_PORT:-9000}:9000"  # exposing the dynamic webpack dev server
+      - "127.0.0.1:${NODE_PORT:-9003}:9000"  # exposing the dynamic webpack dev server
     command: ["/app/docker/docker-frontend.sh"]
     env_file:
       - path: docker/.env # default
@@ -215,15 +193,16 @@ services:
       - path: docker/.env-local # optional override
         required: false
     volumes: *superset-volumes
+    networks: *superset-networks
 
   superset-worker:
     build:
       <<: *common-build
     command: ["/app/docker/docker-bootstrap.sh", "worker"]
     env_file:
-      - path: docker/.env # default
+      - path: docker/.env
         required: true
-      - path: docker/.env-local # optional override
+      - path: docker/.env-local
         required: false
     environment:
       CELERYD_CONCURRENCY: 2
@@ -233,28 +212,23 @@ services:
         condition: service_completed_successfully
     user: *superset-user
     volumes: *superset-volumes
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD-SHELL", "celery -A superset.tasks.celery_app:app inspect ping -d celery@$$HOSTNAME"]
-    # Bump memory limit if processing selenium / thumbnails on superset-worker
-    # mem_limit: 2038m
-    # mem_reservation: 128M
+    networks: *superset-networks
 
   superset-worker-beat:
     build:
       <<: *common-build
     command: ["/app/docker/docker-bootstrap.sh", "beat"]
     env_file:
-      - path: docker/.env # default
+      - path: docker/.env
         required: true
-      - path: docker/.env-local # optional override
+      - path: docker/.env-local
         required: false
     restart: unless-stopped
     depends_on:
       - superset-worker
     user: *superset-user
     volumes: *superset-volumes
+    networks: *superset-networks
     healthcheck:
       disable: true
 
@@ -263,9 +237,9 @@ services:
       <<: *common-build
     command: ["/app/docker/docker-bootstrap.sh", "worker"]
     env_file:
-      - path: docker/.env # default
+      - path: docker/.env
         required: true
-      - path: docker/.env-local # optional override
+      - path: docker/.env-local
         required: false
     profiles:
       - optional
@@ -288,9 +262,9 @@ services:
 volumes:
   superset_home:
     external: false
-  db_home:
-    external: false
-  redis:
-    external: false
   superset_data:
     external: false
+
+networks:
+  s4idtcities:
+    external: true

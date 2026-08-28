@@ -23,6 +23,7 @@
 import logging
 import os
 import sys
+from urllib.parse import quote
 
 from celery.schedules import crontab
 from flask_caching.backends.filesystemcache import FileSystemCache
@@ -63,8 +64,10 @@ SQLALCHEMY_EXAMPLES_URI = os.getenv(
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 REDIS_CELERY_DB = os.getenv("REDIS_CELERY_DB", "0")
 REDIS_RESULTS_DB = os.getenv("REDIS_RESULTS_DB", "1")
+REDIS_AUTH = f":{quote(REDIS_PASSWORD, safe='')}@" if REDIS_PASSWORD else ""
 
 RESULTS_BACKEND = FileSystemCache("/app/superset_home/sqllab")
 
@@ -75,13 +78,14 @@ CACHE_CONFIG = {
     "CACHE_REDIS_HOST": REDIS_HOST,
     "CACHE_REDIS_PORT": REDIS_PORT,
     "CACHE_REDIS_DB": REDIS_RESULTS_DB,
+    "CACHE_REDIS_PASSWORD": REDIS_PASSWORD,
 }
 DATA_CACHE_CONFIG = CACHE_CONFIG
 THUMBNAIL_CACHE_CONFIG = CACHE_CONFIG
 
 
 class CeleryConfig:
-    broker_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_CELERY_DB}"
+    broker_url = f"redis://{REDIS_AUTH}{REDIS_HOST}:{REDIS_PORT}/{REDIS_CELERY_DB}"
     imports = (
         "superset.sql_lab",
         "superset.tasks.scheduler",
@@ -89,7 +93,7 @@ class CeleryConfig:
         "superset.tasks.cache",
         "superset.tasks.export_dashboard_excel",
     )
-    result_backend = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_RESULTS_DB}"
+    result_backend = f"redis://{REDIS_AUTH}{REDIS_HOST}:{REDIS_PORT}/{REDIS_RESULTS_DB}"
     worker_prefetch_multiplier = 1
     task_acks_late = False
     beat_schedule = {

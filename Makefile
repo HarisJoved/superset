@@ -50,7 +50,7 @@ superset:
 	superset load-examples
 
 	# Install node packages
-	cd superset-frontend; npm ci
+	cd superset-frontend; npm install --force
 
 update: update-py update-js
 
@@ -72,7 +72,7 @@ update-py:
 
 update-js:
 	# Install js packages
-	cd superset-frontend; npm ci
+	cd superset-frontend; npm install --force
 
 venv:
 	# Create a virtual environment and activate it (recommended)
@@ -105,7 +105,7 @@ node-app:
 
 build-cypress:
 	cd superset-frontend; npm run build-instrumented
-	cd superset-frontend/cypress-base; npm ci
+	cd superset-frontend/cypress-base; npm install --force
 
 open-cypress:
 	if ! [ $(port) ]; then cd superset-frontend/cypress-base; CYPRESS_BASE_URL=http://localhost:9000 npm run cypress open; fi
