@@ -75,6 +75,7 @@
     "./package.json"
   ],
   "references": [
+    { "path": "./plugins/plugin-chart-hello-world" },
     { "path": "./packages/superset-core" },
     { "path": "./packages/superset-ui-core" },
     { "path": "./packages/superset-ui-chart-controls" },
