@@ -163,7 +163,7 @@ InteractiveTypography.parameters = {
         and <Typography.Text mark>Paragraph</Typography.Text> for block content.
       </Typography.Paragraph>
       <Typography.Link href="https://superset.apache.org" target="_blank">
-        Learn more about Apache Superset
+        Learn more about IDT Dashboard Manager
       </Typography.Link>
     </div>
   );
@@ -451,7 +451,7 @@ export const InteractiveLink: LinkStory = {
   return (
     <div>
       <Typography.Link href="https://superset.apache.org" target="_blank">
-        Apache Superset
+        IDT Dashboard Manager
       </Typography.Link>
     </div>
   );

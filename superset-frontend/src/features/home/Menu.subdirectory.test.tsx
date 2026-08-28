@@ -90,8 +90,8 @@ const mockedProps = {
     menu: [],
     brand: {
       path: '/superset/welcome/',
-      icon: '/static/assets/images/superset-logo-horiz.png',
-      alt: 'Apache Superset',
+      icon: '/static/assets/images/superset-logo-horizo.png',
+      alt: 'IDT Dashboard Manager',
       width: '126',
       tooltip: '',
       text: '',
@@ -169,7 +169,7 @@ test('brand logo link is single-prefixed when brandLogoHref arrives already root
   renderUnderSubdirectory();
 
   const brandLink = await screen.findByRole('link', {
-    name: /apache superset/i,
+    name: /IDT Dashboard Manager/i,
   });
   expect(brandLink).toHaveAttribute('href', '/superset/welcome/');
   expect(brandLink.getAttribute('href')).not.toContain('/superset/superset');
@@ -187,7 +187,7 @@ test('brand logo link is single-prefixed when brandLogoHref is a bare path', asy
   renderUnderSubdirectory();
 
   const brandLink = await screen.findByRole('link', {
-    name: /apache superset/i,
+    name: /IDT Dashboard Manager/i,
   });
   expect(brandLink).toHaveAttribute('href', '/superset/welcome/');
   expect(brandLink.getAttribute('href')).not.toContain('/superset/superset');
@@ -208,7 +208,7 @@ test('brand logo link renders without crashing when brandLogoHref is unset (part
   renderUnderSubdirectory();
 
   const brandLink = await screen.findByRole('link', {
-    name: /apache superset/i,
+    name: /IDT Dashboard Manager/i,
   });
   expect(brandLink.getAttribute('href')).toMatch(/^\/superset\/?$/);
   expect(brandLink.getAttribute('href')).not.toContain('/superset/superset');
@@ -224,7 +224,7 @@ test('external brandLogoHref passes through without app-root prefixing', async (
   renderUnderSubdirectory();
 
   const brandLink = await screen.findByRole('link', {
-    name: /apache superset/i,
+    name: /IDT Dashboard Manager/i,
   });
   expect(brandLink).toHaveAttribute('href', 'https://external.example.com');
 });

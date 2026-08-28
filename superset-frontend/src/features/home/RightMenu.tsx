@@ -570,7 +570,7 @@ const RightMenu = ({
                 >
                   {[
                     navbarRight.show_watermark &&
-                      t('Powered by Apache Superset'),
+                      t('Powered by IDT Dashboard Manager'),
                     navbarRight.version_string &&
                       `${t('Version')}: ${navbarRight.version_string}`,
                     navbarRight.version_sha &&

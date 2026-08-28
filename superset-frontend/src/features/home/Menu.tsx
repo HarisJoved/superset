@@ -332,7 +332,7 @@ export function Menu({
         <StyledImage
           preview={false}
           src={ensureStaticPrefix(theme.brandLogoUrl)}
-          alt={theme.brandLogoAlt || 'Apache Superset'}
+          alt={theme.brandLogoAlt || 'IDT Dashboard Manager'}
           height={theme.brandLogoHeight}
         />
       );

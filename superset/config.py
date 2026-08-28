@@ -436,7 +436,7 @@ APP_NAME = "Superset"
 # NOTE: This variable is used to populate THEME_DEFAULT. If you override this in
 # superset_config.py, you must also override THEME_DEFAULT to see the change,
 # or set THEME_DEFAULT["token"]["brandLogoUrl"] directly.
-APP_ICON = "/static/assets/images/superset-logo-horiz.png"
+APP_ICON = "/static/assets/images/superset-logo-horizo.png"
 
 # Specify where clicking the logo would take the user
 # Default value of None will take you to '/superset/welcome'
@@ -1074,7 +1074,7 @@ _THEME_DEFAULT_BASE: Theme = {
         # Brand
         # Application name for window titles
         "brandAppName": APP_NAME,
-        "brandLogoAlt": "Apache Superset",
+        "brandLogoAlt": "IDT Dashboard Manager",
         "brandLogoUrl": APP_ICON,
         "brandLogoMargin": "18px 0",
         "brandLogoHref": LOGO_TARGET_PATH or "/",

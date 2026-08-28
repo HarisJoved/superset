@@ -18,7 +18,7 @@
  */
 
 /* eslint sort-keys: 'off' */
-/** The form data defined here is based on default visualizations packaged with Apache Superset */
+/** The form data defined here is based on default visualizations packaged with IDT Dashboard Manager */
 import { TimeGranularity, VizType } from '@superset-ui/core';
 
 export const bigNumberFormData = {

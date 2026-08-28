@@ -22,7 +22,7 @@ under the License.
 [![Version](https://img.shields.io/npm/v/@superset-ui/core.svg?style=flat)](https://www.npmjs.com/package/@superset-ui/core)
 [![Libraries.io](https://img.shields.io/librariesio/release/npm/%40superset-ui%2Fcore?style=flat)](https://libraries.io/npm/@superset-ui%2Fcore)
 
-The core package for Apache Superset's frontend. It provides shared utilities,
+The core package for IDT Dashboard Manager's frontend. It provides shared utilities,
 types, and abstractions used across all Superset chart plugins and UI components.
 
 Key modules include:

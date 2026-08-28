@@ -61,7 +61,7 @@ Inline \`code\` works too!
 | Row 1    | Data     | More     |
 | Row 2    | Data     | More     |
 
-[Link to Apache Superset](https://superset.apache.org)
+[Link to IDT Dashboard Manager](https://superset.apache.org)
 `,
   htmlSanitization: true,
 };

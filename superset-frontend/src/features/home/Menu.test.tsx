@@ -219,8 +219,8 @@ const mockedProps = {
     ],
     brand: {
       path: '/superset/welcome/',
-      icon: '/static/assets/images/superset-logo-horiz.png',
-      alt: 'Apache Superset',
+      icon: '/static/assets/images/superset-logo-horizo.png',
+      alt: 'IDT Dashboard Manager',
       width: '126',
       tooltip: '',
       text: '',
@@ -748,7 +748,7 @@ test('brand logo href should not be prefixed with app root when brandLogoHref is
   });
 
   const brandLink = await screen.findByRole('link', {
-    name: /apache superset/i,
+    name: /IDT Dashboard Manager/i,
   });
   expect(brandLink).toHaveAttribute('href', 'https://external.example.com');
 });
@@ -770,7 +770,7 @@ test('brand logo href should not be prefixed with app root when brandLogoHref is
   });
 
   const brandLink = await screen.findByRole('link', {
-    name: /apache superset/i,
+    name: /IDT Dashboard Manager/i,
   });
   expect(brandLink).toHaveAttribute('href', '//external.example.com');
 });
@@ -866,7 +866,7 @@ describe('brand link single-prefix regressions (subdirectory deployment)', () =>
         brand: {
           ...mockedProps.data.brand,
           path: '/superset/welcome/',
-          icon: '/superset/static/assets/images/superset-logo-horiz.png',
+          icon: '/superset/static/assets/images/superset-logo-horizo.png',
         },
       },
     };
@@ -898,7 +898,7 @@ describe('brand link single-prefix regressions (subdirectory deployment)', () =>
         brand: {
           ...mockedProps.data.brand,
           path: '/superset/welcome/',
-          icon: '/superset/static/assets/images/superset-logo-horiz.png',
+          icon: '/superset/static/assets/images/superset-logo-horizo.png',
         },
       },
     };
@@ -917,7 +917,7 @@ describe('brand link single-prefix regressions (subdirectory deployment)', () =>
     const brandImg = brandLink.querySelector('img');
     expect(brandImg).toHaveAttribute(
       'src',
-      '/superset/static/assets/images/superset-logo-horiz.png',
+      '/superset/static/assets/images/superset-logo-horizo.png',
     );
   });
 
@@ -934,7 +934,7 @@ describe('brand link single-prefix regressions (subdirectory deployment)', () =>
         brand: {
           ...mockedProps.data.brand,
           path: '/preset/superset/welcome/',
-          icon: '/preset/superset/static/assets/images/superset-logo-horiz.png',
+          icon: '/preset/superset/static/assets/images/superset-logo-horizo.png',
         },
       },
     };
@@ -971,7 +971,7 @@ describe('brand link single-prefix regressions (subdirectory deployment)', () =>
     });
 
     const brandLink = await screen.findByRole('link', {
-      name: /apache superset/i,
+      name: /IDT Dashboard Manager/i,
     });
     // The internal brand logo link goes through StyledBrandLink -> GenericLink
     // -> react-router <Link>. The production Router re-prepends the app root, so

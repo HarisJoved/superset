@@ -161,7 +161,7 @@ export function OAuth2RedirectMessage({
   const body = (
     <p>
       {t(
-        'This database uses OAuth2 for authentication. Please click the link above to grant Apache Superset permission to access the data. Your personal access token will be stored encrypted and used only for queries run by you.',
+        'This database uses OAuth2 for authentication. Please click the link above to grant IDT Dashboard Manager permission to access the data. Your personal access token will be stored encrypted and used only for queries run by you.',
       )}
     </p>
   );
