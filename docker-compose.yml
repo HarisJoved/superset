@@ -58,7 +58,7 @@ services:
     image: nginx:latest
     restart: unless-stopped
     ports:
-      - "${NGINX_PORT:-8090}:80"
+      - "127.0.0.1:${NGINX_PORT:-8090}:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -74,7 +74,7 @@ services:
       - /bin/bash
       - -c
       - |
-        url="http://host.docker.internal:9000/static/assets/manifest.json"
+        url="http://superset-node:9000/static/assets/manifest.json"
         max_attempts=300  # ~10 minutes at 2s intervals; first build can be slow
         echo "Waiting for webpack dev server at $$url..."
         attempt=0
@@ -82,7 +82,7 @@ services:
           attempt=$$((attempt + 1))
           if [ "$$attempt" -ge "$$max_attempts" ]; then
             echo "ERROR: webpack dev server did not serve $$url after $$max_attempts attempts." >&2
-            echo "Is the dev server running? With BUILD_SUPERSET_FRONTEND_IN_DOCKER=false you must start it on the host (e.g. 'npm run dev' in superset-frontend)." >&2
+            echo "Is the dev server running in the superset-node container?" >&2
             exit 1
           fi
           if [ $$((attempt % 15)) -eq 0 ]; then
@@ -92,6 +92,7 @@ services:
         done
         echo "Webpack dev server is ready; starting nginx."
         exec /docker-entrypoint.sh nginx -g 'daemon off;'
+    networks: *superset-networks
 
   superset:
     env_file:
@@ -106,7 +107,7 @@ services:
     ports:
       - ${SUPERSET_PORT:-8088}:8088
       # When in cypress-mode ->
-      - ${CYPRESS_PORT:-8081}:8081
+      - 127.0.0.1:${CYPRESS_PORT:-8083}:8081
     extra_hosts:
       - "host.docker.internal:host-gateway"
     user: *superset-user
@@ -121,7 +122,7 @@ services:
   superset-websocket:
     build: ./superset-websocket
     ports:
-      - ${WEBSOCKET_PORT:-8080}:8080
+      - 127.0.0.1:${WEBSOCKET_PORT:-8082}:8080
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # Mount everything in superset-websocket into container and
@@ -158,6 +159,7 @@ services:
         required: true
       - path: docker/.env-local # optional override
         required: false
+    command: ["/app/docker/docker-init.sh"]
     user: *superset-user
     volumes: *superset-volumes
     networks: *superset-networks
