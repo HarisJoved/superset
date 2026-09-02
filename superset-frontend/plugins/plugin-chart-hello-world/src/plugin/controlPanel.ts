@@ -16,12 +16,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { t as coreT } from '@superset-ui/core';
-import { ControlPanelConfig } from '@superset-ui/chart-controls';
+import { t } from '@apache-superset/core/translation';
+import type { ControlPanelConfig } from '@superset-ui/chart-controls';
 import SensorSceneControl from './controls/SensorSceneControl';
 
-// Safe translation wrapper avoiding TranslatorSingleton crashes on module load
-const t = typeof coreT === 'function' ? coreT : (str: string) => str;
 
 interface DatasourceLike {
   columns?: { column_name?: string; verbose_name?: string | null }[];

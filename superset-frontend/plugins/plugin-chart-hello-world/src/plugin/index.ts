@@ -16,14 +16,12 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { t as coreT, ChartMetadata, ChartPlugin } from '@superset-ui/core';
-import buildQuery from './buildQuery';
+import { ChartMetadata, ChartPlugin } from '@superset-ui/core';
+import { t } from '@apache-superset/core/translation';import buildQuery from './buildQuery';
 import controlPanel from './controlPanel';
 import transformProps from './transformProps';
 import thumbnail from '../images/thumbnail.png';
 
-// Safe translation function wrapper
-const t = typeof coreT === 'function' ? coreT : (str: string) => str;
 
 export default class SupersetPluginChartHelloWorld extends ChartPlugin {
   /**
