@@ -193,7 +193,7 @@ function buildDeviceGroup(
     const color = new THREE.Color(
       markerColorOf(device, DEFAULT_SHAPE_COLORS[shapeId] || FALLBACK_MARKER_COLOR),
     );
-    const { group: markerGroup, coreMesh, update } = buildMarkerShape(shapeId, color, radius);
+    const { group: markerGroup, coreMesh, update, labelOffsetY } = buildMarkerShape(shapeId, color, radius);
     markerGroup.position.copy(pos);
     coreMesh.userData.device = device;
     group.add(markerGroup);
@@ -210,8 +210,10 @@ function buildDeviceGroup(
       const label = makeLabelSprite(displayName(device), worldSize * 0.18);
       // Local offset, not a world position — parented to markerGroup so the
       // label rides along with the marker's idle bob instead of floating
-      // detached from it.
-      label.position.set(0, radius + worldSize * 0.03, 0);
+      // detached from it. Shapes that sit on a pole (most of them now)
+      // report their own head height via `labelOffsetY`; shapes without one
+      // fall back to the old flat `radius` offset.
+      label.position.set(0, (labelOffsetY ?? radius) + worldSize * 0.03, 0);
       markerGroup.add(label);
     }
   });
@@ -727,6 +729,12 @@ export default function SupersetPluginChartHelloWorld(
       0.04,
     ).texture;
     pmremGenerator.dispose();
+    // Baseline (Day) strength for the environment's image-based lighting —
+    // the Night effect below scales this down. Without touching this, the
+    // GLTF/PBR materials keep pulling most of their brightness from this
+    // fixed IBL regardless of the ambient/directional light changes, which
+    // is why toggling Night used to only ever change the background colour.
+    scene.environmentIntensity = 1;
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.7);
     scene.add(ambient);
@@ -790,26 +798,35 @@ export default function SupersetPluginChartHelloWorld(
     sceneRef.current.background = new THREE.Color(hex);
   }, [dayBackgroundColor, nightBackgroundColor, isNight]);
 
-  // Day/night only touches lighting, not the configured background colour —
+  // Day/night touches lighting AND how strongly the model itself is lit —
   // swapping to a cool, dim ambient + directional light for night, and back
-  // to the bright neutral defaults for day. Markers with their own
-  // day/night behaviour (e.g. the "light" shape's glow) read `isNightRef`
-  // directly inside the animate loop above.
+  // to the bright neutral defaults for day. It also dims the environment's
+  // image-based lighting and the renderer's exposure, which is what
+  // actually darkens the model's PBR materials instead of leaving them
+  // just as bright as Day with only the backdrop colour changed. Markers
+  // with their own day/night behaviour (e.g. the "light" shape's glow)
+  // read `isNightRef` directly inside the animate loop above.
   useEffect(() => {
     isNightRef.current = isNight;
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
     const ambient = ambientLightRef.current;
     const directional = directionalLightRef.current;
-    if (!ambient || !directional) return;
+    if (!ambient || !directional || !scene || !renderer) return;
     if (isNight) {
       ambient.intensity = 0.22;
       ambient.color.set('#7c9cff');
       directional.intensity = 0.25;
       directional.color.set('#8fb0ff');
+      scene.environmentIntensity = 0.25;
+      renderer.toneMappingExposure = 0.55;
     } else {
       ambient.intensity = 0.7;
       ambient.color.set('#ffffff');
       directional.intensity = 0.9;
       directional.color.set('#ffffff');
+      scene.environmentIntensity = 1;
+      renderer.toneMappingExposure = 1;
     }
   }, [isNight]);
 
