@@ -51,7 +51,7 @@ describe('ensureStaticPrefix should be idempotent', () => {
   test('does not double-prefix a path that already starts with the static-assets prefix', () => {
     staticAssetsPrefixMock.mockReturnValue('/superset');
     const alreadyRooted =
-      '/superset/static/assets/images/superset-logo-horizo.png';
+      '/superset/static/assets/images/IDT-dashboard-manager.png';
     expect(ensureStaticPrefix(alreadyRooted)).toBe(alreadyRooted);
   });
 

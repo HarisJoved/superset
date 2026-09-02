@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { useCallback, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 
 interface JsonFileUploadControlProps {
   value?: string;

@@ -84,5 +84,5 @@ def test_get_url_path_preserves_query_params(app_context: None) -> None:
 
     assert (
         test_url
-        == "http://localhost:9000/static/assets/images/favicon.png?standalone=1&form_data=%7B%22slice_id%22:+76%7D"
+        == "http://localhost:9000/static/assets/images/faviconIDT.png?standalone=1&form_data=%7B%22slice_id%22:+76%7D"
     )

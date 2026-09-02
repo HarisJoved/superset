@@ -90,7 +90,7 @@ const mockedProps = {
     menu: [],
     brand: {
       path: '/superset/welcome/',
-      icon: '/static/assets/images/superset-logo-horizo.png',
+      icon: '/static/assets/images/IDT-dashboard-manager.png',
       alt: 'IDT Dashboard Manager',
       width: '126',
       tooltip: '',
