@@ -24,6 +24,7 @@ import {
   getSensorRoster,
   setPickTarget,
   subscribePick,
+  subscribeSetDefaultView,
   subscribeState,
 } from '../../sensorEditorBridge';
 import { parseSensorId, resolveNgsiId } from '../../api';
@@ -111,6 +112,8 @@ const numberInputStyle: React.CSSProperties = {
   padding: '2px 4px',
   border: '1px solid #d9dbe4',
   borderRadius: 4,
+  background: '#ffffff',
+  color: '#1e293b',
 };
 
 const buttonStyle: React.CSSProperties = {
@@ -418,6 +421,18 @@ export default function SensorSceneControl({
     [updateDevice, updateLocation],
   );
 
+  // The viewer's "Set as default" button — persist whatever camera framing
+  // the user landed on as SceneData.defaultView, same upsert-on-first-edit
+  // approach as updateModelTransform (a scene need not already exist).
+  useEffect(
+    () =>
+      subscribeSetDefaultView(view => {
+        const current: SceneData = sceneRef.current ?? { devices: [] };
+        applyScene({ ...current, defaultView: view });
+      }),
+    [applyScene],
+  );
+
   const handleFile = useCallback(
     (file: File) => {
       setError('');
@@ -616,7 +631,17 @@ export default function SensorSceneControl({
   }
 
   return (
-    <div style={{ marginBottom: 8 }}>
+    // `colorScheme: 'light'` is deliberate and covers the whole control:
+    // native form elements (this file's <select>, <input type=number>,
+    // buttons) otherwise pick up the *browser's* dark-mode rendering
+    // whenever the page around them sets a dark `color-scheme` — which
+    // Superset's own dark theme does — even though every element below
+    // already has an explicit light background/text colour. Without this,
+    // things like the Shape <select> end up dark-on-dark or light-on-light
+    // depending on the browser. This is about matching Superset's Explore
+    // panel chrome, not the model's own Day/Night lighting toggle, which
+    // is unrelated and lives entirely in the chart viewer instead.
+    <div style={{ marginBottom: 8, colorScheme: 'light' }}>
       {label && (
         <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 12 }}>
           {label}
@@ -764,6 +789,40 @@ export default function SensorSceneControl({
           </div>
         );
       })()}
+
+      {scene?.defaultView && (
+        <div
+          style={{
+            marginTop: 8,
+            border: '1px solid #e2e8f0',
+            borderRadius: 4,
+            padding: 8,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+          }}
+        >
+          <div style={{ fontSize: 11, color: '#8e94a1' }}>
+            A default camera view is saved — this chart opens (and its
+            navigation widget&rsquo;s reset button returns) to that framing
+            instead of auto-fitting the model. Set from the viewer&rsquo;s
+            &ldquo;Set as default&rdquo; button.
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const current: SceneData = sceneRef.current ?? { devices: [] };
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { defaultView: _defaultView, ...rest } = current;
+              applyScene(rest);
+            }}
+            style={{ ...buttonStyle, width: 'auto', flexShrink: 0, color: '#b91c1c' }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {devices.length === 0 && (
         <div style={{ fontSize: 11, color: '#8e94a1', marginTop: 8 }}>

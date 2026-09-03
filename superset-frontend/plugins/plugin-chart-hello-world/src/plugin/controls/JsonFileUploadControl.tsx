@@ -66,7 +66,10 @@ export default function JsonFileUploadControl({
   );
 
   return (
-    <div style={{ marginBottom: 8 }}>
+    // Same `colorScheme: 'light'` fix as SensorSceneControl — keeps the
+    // native file-picker button legible against Superset's own dark theme
+    // instead of picking up the browser's auto dark-mode form-control skin.
+    <div style={{ marginBottom: 8, colorScheme: 'light' }}>
       {label && (
         <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 12 }}>
           {label}

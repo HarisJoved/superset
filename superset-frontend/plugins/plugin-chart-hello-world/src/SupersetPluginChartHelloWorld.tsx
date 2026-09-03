@@ -24,7 +24,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 // eslint-disable-next-line import/extensions
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import {
   DeviceDatum,
   LocationPoi,
@@ -38,6 +38,7 @@ import {
   PickTarget,
   Position3,
   emitPick,
+  emitSetDefaultView,
   getPickTarget,
   setModelInfo,
   setPickTarget,
@@ -199,13 +200,13 @@ function phaseFromId(id: string): number {
   return (Math.abs(h) % 1000) / 1000 * Math.PI * 2;
 }
 
-/** Real-time point lights are the expensive part of the `light` marker
- * shape (see `markerShapes.ts`) — capping how many markers in one scene
- * actually get one keeps a model with a couple dozen light sensors from
- * accumulating that many live lights. Every light marker beyond the cap
- * still renders fully (bulb colour, glow halo) — it just doesn't cast onto
- * its surroundings. Picked by array order, not distance/visibility, so
- * which ones are "lit" doesn't change as the camera moves. */
+/** Real-time point lights are the expensive part of the `light`/`bulb`
+ * marker shapes (see `markerShapes.ts`) — capping how many markers in one
+ * scene actually get one keeps a model with a couple dozen light sensors
+ * from accumulating that many live lights. Every light/bulb marker beyond
+ * the cap still renders fully (bulb colour, glow halo) — it just doesn't
+ * cast onto its surroundings. Picked by array order, not distance/
+ * visibility, so which ones are "lit" doesn't change as the camera moves. */
 const MAX_LIGHT_POINT_LIGHTS = 12;
 
 function buildDeviceGroup(
@@ -233,7 +234,7 @@ function buildDeviceGroup(
       markerColorOf(device, DEFAULT_SHAPE_COLORS[shapeId] || FALLBACK_MARKER_COLOR),
     );
     let shapeOptions: { castLight?: boolean } | undefined;
-    if (shapeId === 'light') {
+    if (shapeId === 'light' || shapeId === 'bulb') {
       const castLight = lightPointLightsUsed < MAX_LIGHT_POINT_LIGHTS;
       if (castLight) lightPointLightsUsed += 1;
       shapeOptions = { castLight };
@@ -317,7 +318,7 @@ export default function SupersetPluginChartHelloWorld(
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const controlsRef = useRef<OrbitControls | null>(null);
+  const controlsRef = useRef<TrackballControls | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const modelGroupRef = useRef<THREE.Group | null>(null);
   const deviceGroupRef = useRef<THREE.Group | null>(null);
@@ -358,6 +359,7 @@ export default function SupersetPluginChartHelloWorld(
   const [searchOpen, setSearchOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<PanelId>('3d');
   const [isNight, setIsNight] = useState(false);
+  const [defaultViewSaved, setDefaultViewSaved] = useState(false);
 
   const fontSizes: Record<string, string> = {
     xxs: '12px',
@@ -579,6 +581,27 @@ export default function SupersetPluginChartHelloWorld(
     const center = sphere.center.clone();
     const radius = Math.max(sphere.radius, 1e-4);
 
+    // A user-saved default view (see the "Set as default" button) takes
+    // priority over the auto-fit below — reproduces exactly the framing
+    // they picked, rather than the generic three-quarter fit-to-model view.
+    const savedView = sceneData?.defaultView;
+    if (savedView) {
+      const savedPosition = new THREE.Vector3(...savedView.position);
+      const savedTarget = new THREE.Vector3(...savedView.target);
+      const dist = Math.max(savedPosition.distanceTo(savedTarget), 1e-4);
+      camera.position.copy(savedPosition);
+      camera.near = Math.max(dist / 200, 1e-6);
+      camera.far = dist * 30 + radius * 10;
+      camera.updateProjectionMatrix();
+      camera.lookAt(savedTarget);
+      camera.updateMatrixWorld();
+      controls.target.copy(savedTarget);
+      controls.minDistance = Math.min(radius * 0.02, dist * 0.05);
+      controls.maxDistance = Math.max(dist * 20, radius * 20);
+      controls.update();
+      return;
+    }
+
     // Pleasant three-quarter view. The camera always sits exactly `distance`
     // along this direction from the centre.
     const direction = new THREE.Vector3(1, 0.55, 1).normalize();
@@ -711,7 +734,7 @@ export default function SupersetPluginChartHelloWorld(
   /**
    * Orbit/zoom nudges for the compact on-canvas navigation widget — mouse
    * drag (orbit), scroll (zoom) and right-drag (pan) already work via
-   * OrbitControls, but those aren't discoverable and are awkward on a
+   * TrackballControls, but those aren't discoverable and are awkward on a
    * trackpad, hence explicit buttons. Both nudges work the same way: read
    * the camera's offset from the controls' orbit target as a spherical
    * coordinate, adjust it, write it back, then let `controls.update()`
@@ -747,6 +770,29 @@ export default function SupersetPluginChartHelloWorld(
     offset.setLength(nextDistance);
     camera.position.copy(controls.target).add(offset);
     controls.update();
+  }
+
+  /**
+   * "Set as default" (bottom-right, replacing the old plain "Reset view"
+   * button) — captures exactly where the user has manually orbited/panned/
+   * zoomed to and publishes it over the sensor editor bridge so the control
+   * panel (if mounted — i.e. while editing this chart in Explore) can
+   * persist it as `SceneData.defaultView`. Much easier for a user to get
+   * right than typing raw camera coordinates, since they're just looking at
+   * the result the whole time they're framing it. Only takes effect in
+   * Explore; on a saved dashboard there's no control panel to hear it, same
+   * as the existing device/location "pick position on model" flow.
+   */
+  function setCurrentViewAsDefault() {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    emitSetDefaultView({
+      position: [camera.position.x, camera.position.y, camera.position.z],
+      target: [controls.target.x, controls.target.y, controls.target.z],
+    });
+    setDefaultViewSaved(true);
+    window.setTimeout(() => setDefaultViewSaved(false), 1800);
   }
 
   function raycastMarkersAt(clientX: number, clientY: number): THREE.Intersection[] {
@@ -837,8 +883,18 @@ export default function SupersetPluginChartHelloWorld(
     scene.add(directional);
     directionalLightRef.current = directional;
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
+    // TrackballControls, not OrbitControls: OrbitControls clamps the polar
+    // angle to [0, π] (straight up to straight down), so dragging vertically
+    // past the zenith/nadir just stops responding — reads as the view
+    // getting "stuck". TrackballControls has no such pole, so the model can
+    // be rotated freely in any direction, including all the way over the
+    // top, with the mouse.
+    const controls = new TrackballControls(camera, renderer.domElement);
+    controls.rotateSpeed = 3.2;
+    controls.zoomSpeed = 1.2;
+    controls.panSpeed = 0.6;
+    controls.staticMoving = false;
+    controls.dynamicDampingFactor = 0.15;
     controlsRef.current = controls;
 
     clockRef.current = new THREE.Clock();
@@ -1181,6 +1237,10 @@ export default function SupersetPluginChartHelloWorld(
     camera.aspect =
       container.clientWidth / Math.max(container.clientHeight, 1);
     camera.updateProjectionMatrix();
+    // TrackballControls caches the canvas's screen-space bounding rect for
+    // its rotate/pan/zoom math — without this it keeps using stale
+    // dimensions after a resize and dragging feels off.
+    controlsRef.current?.handleResize();
   }, [width, height]);
 
   // Human-readable label for whatever is currently armed for pick mode —
@@ -1567,25 +1627,26 @@ export default function SupersetPluginChartHelloWorld(
         {(resolvedModelUrl || placedDevices.length > 0) && (
           <button
             type="button"
-            onClick={() => frameCameraRef.current()}
+            onClick={setCurrentViewAsDefault}
+            title="Save the current camera angle/position as this chart's default view"
             style={{
               padding: '5px 10px',
               fontSize: 11,
               fontWeight: 600,
-              color: '#334155',
+              color: defaultViewSaved ? '#15803d' : '#334155',
               background: 'rgba(255,255,255,0.9)',
-              border: '1px solid #cbd5e1',
+              border: `1px solid ${defaultViewSaved ? '#16a34a' : '#cbd5e1'}`,
               borderRadius: 6,
               cursor: 'pointer',
             }}
           >
-            Reset view
+            {defaultViewSaved ? '✓ Saved as default' : 'Set as default'}
           </button>
         )}
       </div>
 
       {/* Compact navigation widget — dragging/scrolling on the canvas
-          already orbits/zooms via OrbitControls, but that's not obvious and
+          already orbits/zooms via TrackballControls, but that's not obvious and
           is fiddly on a trackpad. Docked to the right edge, vertically
           centred: the one spot in this layout with nothing else in it (top
           corners hold the header/search, top-left-under has the model/

@@ -33,6 +33,7 @@ export type MarkerShapeId =
   | 'sphere'
   | 'pin'
   | 'light'
+  | 'bulb'
   | 'dust'
   | 'noise'
   | 'cube'
@@ -49,7 +50,8 @@ export interface MarkerShapeOption {
 export const MARKER_SHAPE_OPTIONS: MarkerShapeOption[] = [
   { id: 'sphere', label: 'Sphere', description: 'Pole beacon with a slow pulsing glow — works for any sensor.' },
   { id: 'pin', label: 'Pin', description: 'Map-pin, tip sits exactly on the sensor, head glows gently.' },
-  { id: 'light', label: 'Light sensor', description: 'Streetlight bulb — grey and dark by day, glowing amber with rays at night.' },
+  { id: 'light', label: 'Light sensor', description: 'Full streetlamp — pole, arm, hood and bulb — grey and dark by day, glowing amber and casting light at night.' },
+  { id: 'bulb', label: 'Bulb only', description: 'Just the glowing bulb, no pole/arm/hood — for models that already have a physical light fixture built in.' },
   { id: 'dust', label: 'Dust / air sensor', description: 'Pole with a drifting particle cloud and pulsing dust rings.' },
   { id: 'noise', label: 'Noise sensor', description: 'Pole with a mic head, expanding sound rings and an animated waveform.' },
   { id: 'cube', label: 'Cube', description: 'Pole-mounted housing with an edge outline and a blinking status LED.' },
@@ -62,16 +64,17 @@ export const MARKER_SHAPE_OPTIONS: MarkerShapeOption[] = [
  * sensor" shape reads as purple out of the box instead of every unstyled
  * model defaulting to the same generic blue.
  *
- * "light" is a fixed exception: it ignores whatever colour it's given
- * entirely and always renders grey by day / amber by night (see
- * `buildLight`) — its entry here exists only so the model-colour swatch in
- * the placement editor has something sane to show, not because it affects
- * the marker's actual on-screen colour.
+ * "light" and "bulb" are a fixed exception: they ignore whatever colour
+ * they're given entirely and always render grey by day / amber by night
+ * (see `buildBulbFixture`) — their entries here exist only so the
+ * model-colour swatch in the placement editor has something sane to show,
+ * not because it affects the marker's actual on-screen colour.
  */
 export const DEFAULT_SHAPE_COLORS: Record<MarkerShapeId, string> = {
   sphere: '#2563eb',
   pin: '#ef4444',
   light: '#fbbf24',
+  bulb: '#fbbf24',
   dust: '#a8a29e',
   noise: '#8b5cf6',
   cube: '#0ea5e9',
@@ -305,75 +308,21 @@ function getGlowTexture(): THREE.Texture | null {
   return cachedGlowTexture;
 }
 
-/**
- * A proper streetlamp — pole, angled arm, fixture hood and bulb — for the
- * light-sensor shape, replacing the old bare bulb-with-ray-spokes look.
- * Day vs night is still the one shape with genuinely different behaviour
- * rather than just an idle animation: by day the bulb is a dull grey and
- * switched off (no glow, no light cast); by night it turns warm, gets a
- * soft camera-facing glow halo instead of thin ray lines, and casts a real
- * `THREE.PointLight` so it visibly brightens the model around it — not just
- * itself — the way an actual streetlight would. The fixture itself (pole,
- * arm, hood) stays neutral grey/dark regardless of day/night, same as
- * before, since a fitting's casing doesn't glow either way.
- *
- * The point light's `intensity`/`distance` below are scaled off `radius`
- * (itself proportional to the loaded model's size) so they land in a
- * reasonable range across differently-scaled models, but "reasonable" for
- * a real-time point light is inherently a per-scene visual judgement call —
- * treat these as a starting point and nudge them if a given model's lights
- * look too dim or too blown-out.
- *
- * `options.castLight` (see the viewer's `buildDeviceGroup`) lets the caller
- * skip the point light for this instance entirely while keeping everything
- * else (bulb colour, glow sprite) — used to cap how many real lights a
- * scene with lots of light sensors ends up with.
- */
-function buildLight(
-  _color: THREE.Color,
+/** Shared bulb + glow-halo + optional point light, used by both `light`
+ * (full streetlamp fixture) and `bulb` (bare bulb, no fixture) so the two
+ * shapes stay visually/behaviourally identical apart from the fixture
+ * geometry around them. `bulbPos` is in the marker group's local space —
+ * `light` offsets it out along its arm, `bulb` leaves it at the origin. */
+function buildBulbFixture(
+  group: THREE.Group,
   radius: number,
-  options: MarkerShapeOptions = {},
-): BuiltMarker {
-  const castLight = options.castLight !== false;
-  const group = new THREE.Group();
+  bulbPos: THREE.Vector3,
+  castLight: boolean,
+  bulbScale: number,
+): { coreMesh: THREE.Mesh; update: (elapsed: number, isNight: boolean) => void } {
   const DAY_BULB = new THREE.Color('#9ca3af');
   const NIGHT_BULB = new THREE.Color('#ffd98a');
   const GLOW_COLOR = new THREE.Color('#ffe6b0');
-
-  const fixtureMaterial = new THREE.MeshStandardMaterial({
-    color: '#334155',
-    roughness: 0.7,
-    metalness: 0.2,
-  });
-
-  const poleHeight = radius * 3.4;
-  const pole = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius * 0.1, radius * 0.12, poleHeight, 10),
-    fixtureMaterial,
-  );
-  pole.position.y = poleHeight / 2;
-  group.add(pole);
-
-  // Bulb hangs out and slightly down from the pole top, like a real
-  // streetlight arm, rather than sitting on the pole itself.
-  const poleTop = new THREE.Vector3(0, poleHeight, 0);
-  const bulbPos = new THREE.Vector3(radius * 1.7, poleHeight - radius * 0.55, 0);
-  const armDir = bulbPos.clone().sub(poleTop);
-  const arm = new THREE.Mesh(
-    new THREE.BoxGeometry(radius * 0.14, armDir.length(), radius * 0.14),
-    fixtureMaterial,
-  );
-  arm.position.copy(poleTop).addScaledVector(armDir, 0.5);
-  arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), armDir.clone().normalize());
-  group.add(arm);
-
-  // Small hood just above the bulb so it reads as a fixture, not a bare ball.
-  const hood = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius * 0.55, radius * 0.32, radius * 0.32, 10),
-    fixtureMaterial,
-  );
-  hood.position.copy(bulbPos).add(new THREE.Vector3(0, radius * 0.28, 0));
-  group.add(hood);
 
   const bulbMaterial = new THREE.MeshStandardMaterial({
     color: DAY_BULB.clone(),
@@ -381,7 +330,7 @@ function buildLight(
     emissiveIntensity: 0.05,
     roughness: 0.4,
   });
-  const coreMesh = new THREE.Mesh(new THREE.SphereGeometry(radius * 0.42, 14, 14), bulbMaterial);
+  const coreMesh = new THREE.Mesh(new THREE.SphereGeometry(radius * bulbScale, 14, 14), bulbMaterial);
   coreMesh.position.copy(bulbPos);
   group.add(coreMesh);
 
@@ -436,7 +385,104 @@ function buildLight(
     }
   };
 
+  return { coreMesh, update };
+}
+
+/**
+ * A proper streetlamp — pole, angled arm, fixture hood and bulb — for the
+ * light-sensor shape, replacing the old bare bulb-with-ray-spokes look.
+ * Day vs night is still the one shape with genuinely different behaviour
+ * rather than just an idle animation: by day the bulb is a dull grey and
+ * switched off (no glow, no light cast); by night it turns warm, gets a
+ * soft camera-facing glow halo instead of thin ray lines, and casts a real
+ * `THREE.PointLight` so it visibly brightens the model around it — not just
+ * itself — the way an actual streetlight would. The fixture itself (pole,
+ * arm, hood) stays neutral grey/dark regardless of day/night, same as
+ * before, since a fitting's casing doesn't glow either way.
+ *
+ * The point light's `intensity`/`distance` below are scaled off `radius`
+ * (itself proportional to the loaded model's size) so they land in a
+ * reasonable range across differently-scaled models, but "reasonable" for
+ * a real-time point light is inherently a per-scene visual judgement call —
+ * treat these as a starting point and nudge them if a given model's lights
+ * look too dim or too blown-out.
+ *
+ * `options.castLight` (see the viewer's `buildDeviceGroup`) lets the caller
+ * skip the point light for this instance entirely while keeping everything
+ * else (bulb colour, glow sprite) — used to cap how many real lights a
+ * scene with lots of light sensors ends up with.
+ *
+ * If the model already has physical light fixtures built in and only the
+ * bulb/glow/light itself is wanted, use the `bulb` shape instead — same
+ * bulb behaviour, no pole/arm/hood.
+ */
+function buildLight(
+  _color: THREE.Color,
+  radius: number,
+  options: MarkerShapeOptions = {},
+): BuiltMarker {
+  const castLight = options.castLight !== false;
+  const group = new THREE.Group();
+
+  const fixtureMaterial = new THREE.MeshStandardMaterial({
+    color: '#334155',
+    roughness: 0.7,
+    metalness: 0.2,
+  });
+
+  const poleHeight = radius * 3.4;
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.1, radius * 0.12, poleHeight, 10),
+    fixtureMaterial,
+  );
+  pole.position.y = poleHeight / 2;
+  group.add(pole);
+
+  // Bulb hangs out and slightly down from the pole top, like a real
+  // streetlight arm, rather than sitting on the pole itself.
+  const poleTop = new THREE.Vector3(0, poleHeight, 0);
+  const bulbPos = new THREE.Vector3(radius * 1.7, poleHeight - radius * 0.55, 0);
+  const armDir = bulbPos.clone().sub(poleTop);
+  const arm = new THREE.Mesh(
+    new THREE.BoxGeometry(radius * 0.14, armDir.length(), radius * 0.14),
+    fixtureMaterial,
+  );
+  arm.position.copy(poleTop).addScaledVector(armDir, 0.5);
+  arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), armDir.clone().normalize());
+  group.add(arm);
+
+  // Small hood just above the bulb so it reads as a fixture, not a bare ball.
+  const hood = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.55, radius * 0.32, radius * 0.32, 10),
+    fixtureMaterial,
+  );
+  hood.position.copy(bulbPos).add(new THREE.Vector3(0, radius * 0.28, 0));
+  group.add(hood);
+
+  const { coreMesh, update } = buildBulbFixture(group, radius, bulbPos, castLight, 0.42);
+
   return { group, coreMesh, update, labelOffsetY: poleHeight + radius * 1.3 };
+}
+
+/**
+ * Bare bulb + glow halo + point light, with no pole/arm/hood — for models
+ * that already have physical light posts/fixtures modelled in, where the
+ * full `light` shape's fixture would just duplicate geometry that's
+ * already there. Sits exactly at the sensor's placed position (like
+ * `sphere`/`pin`), so line it up with the model's existing fixture by
+ * placing the sensor at the bulb itself. Same day/night behaviour as
+ * `light` — off/grey by day, warm glow + point light by night.
+ */
+function buildBulb(
+  _color: THREE.Color,
+  radius: number,
+  options: MarkerShapeOptions = {},
+): BuiltMarker {
+  const castLight = options.castLight !== false;
+  const group = new THREE.Group();
+  const bulbPos = new THREE.Vector3(0, 0, 0);
+  const { coreMesh, update } = buildBulbFixture(group, radius, bulbPos, castLight, 0.55);
+  return { group, coreMesh, update, labelOffsetY: radius * 2.2 };
 }
 
 /** Pole-mounted dust / air-quality sensor: a pulsing head, a scattered
@@ -591,6 +637,7 @@ const BUILDERS: Record<
   sphere: buildSphere,
   pin: buildPin,
   light: buildLight,
+  bulb: buildBulb,
   dust: buildDust,
   noise: buildNoise,
   cube: buildCube,

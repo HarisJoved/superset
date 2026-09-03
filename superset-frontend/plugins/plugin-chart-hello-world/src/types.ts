@@ -78,6 +78,15 @@ export interface SceneData {
    * fixes models that come out of their source URL facing the wrong way or
    * on their side (e.g. "head to the left") without needing a re-export. */
   modelRotation?: [number, number, number];
+  /** User-saved default camera framing, set via the viewer's "Set as
+   * default" button (bottom-right) — captures the exact camera position and
+   * orbit target the user was looking at when they clicked it. When
+   * present, this is what the initial view and the nav widget's centre
+   * reset button return to, instead of the auto-fit-to-model framing. */
+  defaultView?: {
+    position: [number, number, number];
+    target: [number, number, number];
+  };
   /** Saved camera bookmarks — named points in the model the viewer's
    * Location filter can jump the camera to. */
   pois?: LocationPoi[];
