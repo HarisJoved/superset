@@ -28,6 +28,8 @@ export default function transformProps(chartProps: ChartProps) {
     sceneDataJson,
     dayBackgroundColor,
     nightBackgroundColor,
+    dayModelShade,
+    nightModelShade,
     cameraZoom,
     showLabels,
     sensorSource,
@@ -38,6 +40,11 @@ export default function transformProps(chartProps: ChartProps) {
   } = formData;
 
   const parsedZoom = Number(cameraZoom);
+  // Same "blank/nonsense TextControl input falls back to a sane default"
+  // handling as cameraZoom below — a shade of 0 or a negative number would
+  // make the model vanish entirely, which reads as a bug, not a choice.
+  const parsedDayShade = Number(dayModelShade);
+  const parsedNightShade = Number(nightModelShade);
   // In JSON-file mode this is the single dummy row from buildQuery's no-op
   // query, which the chart ignores.
   const data = (queriesData?.[0]?.data || []) as SensorRow[];
@@ -51,6 +58,10 @@ export default function transformProps(chartProps: ChartProps) {
     sceneDataJson,
     dayBackgroundColor,
     nightBackgroundColor,
+    dayModelShade:
+      Number.isFinite(parsedDayShade) && parsedDayShade > 0 ? parsedDayShade : 1,
+    nightModelShade:
+      Number.isFinite(parsedNightShade) && parsedNightShade > 0 ? parsedNightShade : 1,
     // TextControl hands back a string; fall back to a plain fit when it's
     // blank or nonsense rather than pushing the camera to NaN.
     cameraZoom: Number.isFinite(parsedZoom) && parsedZoom > 0 ? parsedZoom : 1,

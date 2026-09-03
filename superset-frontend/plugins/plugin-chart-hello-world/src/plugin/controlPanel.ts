@@ -206,6 +206,34 @@ const config: ControlPanelConfig = {
         ],
         [
           {
+            name: 'day_model_shade',
+            config: {
+              type: 'TextControl',
+              isFloat: true,
+              default: 1,
+              renderTrigger: true,
+              label: t('Day Model Shade'),
+              description: t(
+                'Overall brightness of the model itself (not the background) while Day mode is active — lighting, environment reflections and exposure all scale together. 1 = default; try 0.6-0.8 to tone down a model that looks washed out in Day.',
+              ),
+            },
+          },
+          {
+            name: 'night_model_shade',
+            config: {
+              type: 'TextControl',
+              isFloat: true,
+              default: 1,
+              renderTrigger: true,
+              label: t('Night Model Shade'),
+              description: t(
+                'Overall brightness of the model itself (not the background) while Night mode is active. 1 = default; lower it for a darker night, raise it (e.g. 1.5) if Night currently looks too dim to make anything out.',
+              ),
+            },
+          },
+        ],
+        [
+          {
             name: 'camera_zoom',
             config: {
               type: 'TextControl',

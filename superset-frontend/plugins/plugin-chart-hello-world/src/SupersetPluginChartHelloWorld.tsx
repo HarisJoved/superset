@@ -87,6 +87,35 @@ const filterSelectStyle: React.CSSProperties = {
   maxWidth: 190,
 };
 
+/** One button of the compact orbit d-pad — small and square by design, so
+ * the whole 3x3 cluster stays under 90px across. */
+const navPadButtonStyle: React.CSSProperties = {
+  width: 26,
+  height: 26,
+  fontSize: 10,
+  lineHeight: 1,
+  color: '#334155',
+  background: 'rgba(255,255,255,0.9)',
+  border: '1px solid #cbd5e1',
+  borderRadius: 4,
+  cursor: 'pointer',
+  padding: 0,
+};
+
+/** One button of the stacked zoom +/- bar underneath the orbit d-pad. */
+const navBarButtonStyle: React.CSSProperties = {
+  width: 26,
+  height: 22,
+  fontSize: 13,
+  fontWeight: 700,
+  lineHeight: 1,
+  color: '#334155',
+  background: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  padding: 0,
+};
+
 /**
  * The marker colour, guarded against values THREE can't parse. The editor's
  * hex text field is edited character by character, so a half-typed "#25"
@@ -170,6 +199,15 @@ function phaseFromId(id: string): number {
   return (Math.abs(h) % 1000) / 1000 * Math.PI * 2;
 }
 
+/** Real-time point lights are the expensive part of the `light` marker
+ * shape (see `markerShapes.ts`) — capping how many markers in one scene
+ * actually get one keeps a model with a couple dozen light sensors from
+ * accumulating that many live lights. Every light marker beyond the cap
+ * still renders fully (bulb colour, glow halo) — it just doesn't cast onto
+ * its surroundings. Picked by array order, not distance/visibility, so
+ * which ones are "lit" doesn't change as the camera moves. */
+const MAX_LIGHT_POINT_LIGHTS = 12;
+
 function buildDeviceGroup(
   devices: DeviceDatum[],
   markerMeshesOut: THREE.Mesh[],
@@ -180,6 +218,7 @@ function buildDeviceGroup(
 ): THREE.Group {
   const group = new THREE.Group();
   const defaultRadius = worldSize * 0.012;
+  let lightPointLightsUsed = 0;
 
   devices.forEach(device => {
     const [x, y, z] = device.position || [0, 0, 0];
@@ -193,7 +232,18 @@ function buildDeviceGroup(
     const color = new THREE.Color(
       markerColorOf(device, DEFAULT_SHAPE_COLORS[shapeId] || FALLBACK_MARKER_COLOR),
     );
-    const { group: markerGroup, coreMesh, update, labelOffsetY } = buildMarkerShape(shapeId, color, radius);
+    let shapeOptions: { castLight?: boolean } | undefined;
+    if (shapeId === 'light') {
+      const castLight = lightPointLightsUsed < MAX_LIGHT_POINT_LIGHTS;
+      if (castLight) lightPointLightsUsed += 1;
+      shapeOptions = { castLight };
+    }
+    const { group: markerGroup, coreMesh, update, labelOffsetY } = buildMarkerShape(
+      shapeId,
+      color,
+      radius,
+      shapeOptions,
+    );
     markerGroup.position.copy(pos);
     coreMesh.userData.device = device;
     group.add(markerGroup);
@@ -252,6 +302,8 @@ export default function SupersetPluginChartHelloWorld(
     sceneDataJson,
     dayBackgroundColor,
     nightBackgroundColor,
+    dayModelShade = 1,
+    nightModelShade = 1,
     cameraZoom = 1,
     showLabels = true,
     sensorSource,
@@ -656,6 +708,47 @@ export default function SupersetPluginChartHelloWorld(
   // listener on every model-size change.
   focusOnDeviceRef.current = focusOnDevice;
 
+  /**
+   * Orbit/zoom nudges for the compact on-canvas navigation widget — mouse
+   * drag (orbit), scroll (zoom) and right-drag (pan) already work via
+   * OrbitControls, but those aren't discoverable and are awkward on a
+   * trackpad, hence explicit buttons. Both nudges work the same way: read
+   * the camera's offset from the controls' orbit target as a spherical
+   * coordinate, adjust it, write it back, then let `controls.update()`
+   * reconcile its internal state — the same pattern `pointCameraAt` uses,
+   * just relative to the current view instead of framing a new target.
+   */
+  function nudgeOrbit(deltaAzimuth: number, deltaPolar: number) {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    const offset = camera.position.clone().sub(controls.target);
+    const spherical = new THREE.Spherical().setFromVector3(offset);
+    spherical.theta += deltaAzimuth;
+    // Clamped just shy of the poles so the camera can't flip past straight
+    // up/down, which is disorienting with no gimbal lock protection.
+    spherical.phi = Math.min(Math.max(spherical.phi + deltaPolar, 0.05), Math.PI - 0.05);
+    offset.setFromSpherical(spherical);
+    camera.position.copy(controls.target).add(offset);
+    camera.lookAt(controls.target);
+    controls.update();
+  }
+
+  function nudgeZoom(factor: number) {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    const offset = camera.position.clone().sub(controls.target);
+    const distance = offset.length();
+    const nextDistance = Math.min(
+      Math.max(distance * factor, controls.minDistance),
+      controls.maxDistance,
+    );
+    offset.setLength(nextDistance);
+    camera.position.copy(controls.target).add(offset);
+    controls.update();
+  }
+
   function raycastMarkersAt(clientX: number, clientY: number): THREE.Intersection[] {
     const renderer = rendererRef.current;
     const camera = cameraRef.current;
@@ -806,6 +899,11 @@ export default function SupersetPluginChartHelloWorld(
   // just as bright as Day with only the backdrop colour changed. Markers
   // with their own day/night behaviour (e.g. the "light" shape's glow)
   // read `isNightRef` directly inside the animate loop above.
+  //
+  // `dayModelShade`/`nightModelShade` (Customize > Viewer) are a single
+  // multiplier applied on top of every one of those baseline numbers, so
+  // raising/lowering one control moves lighting, environment reflections
+  // and exposure together rather than needing four separate sliders.
   useEffect(() => {
     isNightRef.current = isNight;
     const scene = sceneRef.current;
@@ -813,22 +911,23 @@ export default function SupersetPluginChartHelloWorld(
     const ambient = ambientLightRef.current;
     const directional = directionalLightRef.current;
     if (!ambient || !directional || !scene || !renderer) return;
+    const shade = (isNight ? nightModelShade : dayModelShade) || 1;
     if (isNight) {
-      ambient.intensity = 0.22;
+      ambient.intensity = 0.22 * shade;
       ambient.color.set('#7c9cff');
-      directional.intensity = 0.25;
+      directional.intensity = 0.25 * shade;
       directional.color.set('#8fb0ff');
-      scene.environmentIntensity = 0.25;
-      renderer.toneMappingExposure = 0.55;
+      scene.environmentIntensity = 0.25 * shade;
+      renderer.toneMappingExposure = 0.55 * shade;
     } else {
-      ambient.intensity = 0.7;
+      ambient.intensity = 0.7 * shade;
       ambient.color.set('#ffffff');
-      directional.intensity = 0.9;
+      directional.intensity = 0.9 * shade;
       directional.color.set('#ffffff');
-      scene.environmentIntensity = 1;
-      renderer.toneMappingExposure = 1;
+      scene.environmentIntensity = 1 * shade;
+      renderer.toneMappingExposure = 1 * shade;
     }
-  }, [isNight]);
+  }, [isNight, dayModelShade, nightModelShade]);
 
   // Click/hover handling. Re-registered whenever the pick target changes, so
   // the listener always reads fresh state without stale closures.
@@ -933,6 +1032,18 @@ export default function SupersetPluginChartHelloWorld(
           const [ox, oy, oz] = sceneData.modelOffset;
           group.position.set(ox || 0, oy || 0, oz || 0);
         }
+        // Fixes models that come out of their source URL facing the wrong
+        // way, on their side, or upside down (e.g. "head to the left")
+        // without needing the file itself re-exported — set in degrees from
+        // the Customize panel, applied here in radians.
+        if (sceneData?.modelRotation) {
+          const [rx, ry, rz] = sceneData.modelRotation;
+          group.rotation.set(
+            THREE.MathUtils.degToRad(rx || 0),
+            THREE.MathUtils.degToRad(ry || 0),
+            THREE.MathUtils.degToRad(rz || 0),
+          );
+        }
         modelGroupRef.current = group;
         scene.add(group);
         frameCameraRef.current();
@@ -994,7 +1105,12 @@ export default function SupersetPluginChartHelloWorld(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedModelUrl, sceneData?.modelScale, JSON.stringify(sceneData?.modelOffset)]);
+  }, [
+    resolvedModelUrl,
+    sceneData?.modelScale,
+    JSON.stringify(sceneData?.modelOffset),
+    JSON.stringify(sceneData?.modelRotation),
+  ]);
 
   // Rebuild device markers whenever a marker's position, colour or size
   // changes in the scene JSON (i.e. on every edit made in the control
@@ -1466,6 +1582,113 @@ export default function SupersetPluginChartHelloWorld(
             Reset view
           </button>
         )}
+      </div>
+
+      {/* Compact navigation widget — dragging/scrolling on the canvas
+          already orbits/zooms via OrbitControls, but that's not obvious and
+          is fiddly on a trackpad. Docked to the right edge, vertically
+          centred: the one spot in this layout with nothing else in it (top
+          corners hold the header/search, top-left-under has the model/
+          location filters, both bottom corners hold the Day/Night toggle
+          and the panel nav), so it adds navigation without crowding
+          anything or covering more canvas than a ~90px-wide button
+          cluster. */}
+      <div
+        style={{
+          position: 'absolute',
+          top: '50%',
+          right: 16,
+          transform: 'translateY(-50%)',
+          zIndex: 3,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 6,
+        }}
+      >
+        <div
+          role="group"
+          aria-label="Orbit the model"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 26px)',
+            gridTemplateRows: 'repeat(3, 26px)',
+            gap: 2,
+          }}
+        >
+          <div />
+          <button
+            type="button"
+            aria-label="Orbit up"
+            onClick={() => nudgeOrbit(0, -0.25)}
+            style={navPadButtonStyle}
+          >
+            ▲
+          </button>
+          <div />
+          <button
+            type="button"
+            aria-label="Orbit left"
+            onClick={() => nudgeOrbit(-0.25, 0)}
+            style={navPadButtonStyle}
+          >
+            ◀
+          </button>
+          <button
+            type="button"
+            aria-label="Reset view"
+            onClick={() => frameCameraRef.current()}
+            style={{ ...navPadButtonStyle, fontSize: 11 }}
+          >
+            ⟲
+          </button>
+          <button
+            type="button"
+            aria-label="Orbit right"
+            onClick={() => nudgeOrbit(0.25, 0)}
+            style={navPadButtonStyle}
+          >
+            ▶
+          </button>
+          <div />
+          <button
+            type="button"
+            aria-label="Orbit down"
+            onClick={() => nudgeOrbit(0, 0.25)}
+            style={navPadButtonStyle}
+          >
+            ▼
+          </button>
+          <div />
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            border: '1px solid #cbd5e1',
+            borderRadius: 6,
+            overflow: 'hidden',
+            background: 'rgba(255,255,255,0.9)',
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Zoom in"
+            onClick={() => nudgeZoom(0.8)}
+            style={{ ...navBarButtonStyle, borderBottom: '1px solid #cbd5e1' }}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            aria-label="Zoom out"
+            onClick={() => nudgeZoom(1.25)}
+            style={navBarButtonStyle}
+          >
+            −
+          </button>
+        </div>
       </div>
 
       <div

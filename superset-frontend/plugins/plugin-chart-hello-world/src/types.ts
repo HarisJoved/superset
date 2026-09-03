@@ -74,6 +74,10 @@ export interface SceneData {
   modelScale?: number;
   /** Optional [x,y,z] offset applied to the loaded model's position. */
   modelOffset?: [number, number, number];
+  /** Optional [x,y,z] rotation, in degrees, applied to the loaded model —
+   * fixes models that come out of their source URL facing the wrong way or
+   * on their side (e.g. "head to the left") without needing a re-export. */
+  modelRotation?: [number, number, number];
   /** Saved camera bookmarks — named points in the model the viewer's
    * Location filter can jump the camera to. */
   pois?: LocationPoi[];
@@ -125,6 +129,11 @@ interface SupersetPluginChartHelloWorldCustomizeProps {
    * charts saved before this was a colour picker. */
   dayBackgroundColor?: RgbaColor | string;
   nightBackgroundColor?: RgbaColor | string;
+  /** Overall brightness of the model itself (lighting + environment +
+   * exposure combined, NOT the background colour) while Day/Night mode is
+   * active. 1 = default; lower to darken the model, raise to brighten it. */
+  dayModelShade?: number;
+  nightModelShade?: number;
   /** Multiplier on the auto-fit camera distance. 1 = fit model to viewport. */
   cameraZoom?: number;
   /** Whether to draw the billboard name label next to each marker. */

@@ -276,84 +276,167 @@ function buildPin(color: THREE.Color, radius: number): BuiltMarker {
 }
 
 /**
- * Streetlight bulb with rays radiating from the equator — a light sensor.
- * This is the one shape with genuinely different geometry/colour behaviour
- * for day vs night, not just an animation: by day it's a dull grey bulb
- * with no rays at all (switched off), by night it turns amber, glows, and
- * spins its rays slowly. The colour it's constructed with is intentionally
- * ignored for the bulb/rays themselves — see `DEFAULT_SHAPE_COLORS` — only
- * the dark fixture housing stays neutral regardless of day/night.
+ * Soft radial-gradient billboard texture used for the light shape's glow —
+ * generated once on a &lt;canvas&gt; and shared across every "light" marker
+ * instance (only the SpriteMaterial wrapping it, which carries the
+ * per-instance opacity/colour animation, is created per marker) instead of
+ * one canvas per marker.
  */
-function buildLight(_color: THREE.Color, radius: number): BuiltMarker {
-  const group = new THREE.Group();
-  const DAY_COLOR = new THREE.Color('#9ca3af');
-  const NIGHT_COLOR = new THREE.Color('#fde047');
+let cachedGlowTexture: THREE.Texture | null = null;
+function getGlowTexture(): THREE.Texture | null {
+  if (cachedGlowTexture) return cachedGlowTexture;
+  if (typeof document === 'undefined') return null; // guards non-browser bundling/tests
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const gradient = ctx.createRadialGradient(
+    size / 2, size / 2, 0,
+    size / 2, size / 2, size / 2,
+  );
+  gradient.addColorStop(0, 'rgba(255,255,255,1)');
+  gradient.addColorStop(0.35, 'rgba(255,244,214,0.65)');
+  gradient.addColorStop(1, 'rgba(255,244,214,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  cachedGlowTexture = new THREE.CanvasTexture(canvas);
+  return cachedGlowTexture;
+}
 
-  const material = new THREE.MeshStandardMaterial({
-    color: DAY_COLOR.clone(),
-    emissive: DAY_COLOR.clone(),
-    emissiveIntensity: 0.05,
-    roughness: 0.5,
+/**
+ * A proper streetlamp — pole, angled arm, fixture hood and bulb — for the
+ * light-sensor shape, replacing the old bare bulb-with-ray-spokes look.
+ * Day vs night is still the one shape with genuinely different behaviour
+ * rather than just an idle animation: by day the bulb is a dull grey and
+ * switched off (no glow, no light cast); by night it turns warm, gets a
+ * soft camera-facing glow halo instead of thin ray lines, and casts a real
+ * `THREE.PointLight` so it visibly brightens the model around it — not just
+ * itself — the way an actual streetlight would. The fixture itself (pole,
+ * arm, hood) stays neutral grey/dark regardless of day/night, same as
+ * before, since a fitting's casing doesn't glow either way.
+ *
+ * The point light's `intensity`/`distance` below are scaled off `radius`
+ * (itself proportional to the loaded model's size) so they land in a
+ * reasonable range across differently-scaled models, but "reasonable" for
+ * a real-time point light is inherently a per-scene visual judgement call —
+ * treat these as a starting point and nudge them if a given model's lights
+ * look too dim or too blown-out.
+ *
+ * `options.castLight` (see the viewer's `buildDeviceGroup`) lets the caller
+ * skip the point light for this instance entirely while keeping everything
+ * else (bulb colour, glow sprite) — used to cap how many real lights a
+ * scene with lots of light sensors ends up with.
+ */
+function buildLight(
+  _color: THREE.Color,
+  radius: number,
+  options: MarkerShapeOptions = {},
+): BuiltMarker {
+  const castLight = options.castLight !== false;
+  const group = new THREE.Group();
+  const DAY_BULB = new THREE.Color('#9ca3af');
+  const NIGHT_BULB = new THREE.Color('#ffd98a');
+  const GLOW_COLOR = new THREE.Color('#ffe6b0');
+
+  const fixtureMaterial = new THREE.MeshStandardMaterial({
+    color: '#334155',
+    roughness: 0.7,
+    metalness: 0.2,
   });
-  const coreMesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 16), material);
+
+  const poleHeight = radius * 3.4;
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.1, radius * 0.12, poleHeight, 10),
+    fixtureMaterial,
+  );
+  pole.position.y = poleHeight / 2;
+  group.add(pole);
+
+  // Bulb hangs out and slightly down from the pole top, like a real
+  // streetlight arm, rather than sitting on the pole itself.
+  const poleTop = new THREE.Vector3(0, poleHeight, 0);
+  const bulbPos = new THREE.Vector3(radius * 1.7, poleHeight - radius * 0.55, 0);
+  const armDir = bulbPos.clone().sub(poleTop);
+  const arm = new THREE.Mesh(
+    new THREE.BoxGeometry(radius * 0.14, armDir.length(), radius * 0.14),
+    fixtureMaterial,
+  );
+  arm.position.copy(poleTop).addScaledVector(armDir, 0.5);
+  arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), armDir.clone().normalize());
+  group.add(arm);
+
+  // Small hood just above the bulb so it reads as a fixture, not a bare ball.
+  const hood = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.55, radius * 0.32, radius * 0.32, 10),
+    fixtureMaterial,
+  );
+  hood.position.copy(bulbPos).add(new THREE.Vector3(0, radius * 0.28, 0));
+  group.add(hood);
+
+  const bulbMaterial = new THREE.MeshStandardMaterial({
+    color: DAY_BULB.clone(),
+    emissive: DAY_BULB.clone(),
+    emissiveIntensity: 0.05,
+    roughness: 0.4,
+  });
+  const coreMesh = new THREE.Mesh(new THREE.SphereGeometry(radius * 0.42, 14, 14), bulbMaterial);
+  coreMesh.position.copy(bulbPos);
   group.add(coreMesh);
 
-  // Small dark fixture housing beneath the bulb — reads as a real light
-  // fitting rather than a bare glowing ball, and doesn't change with
-  // day/night since a fixture's casing doesn't glow either way.
-  const housing = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius * 0.45, radius * 0.6, radius * 0.4, 10),
-    new THREE.MeshStandardMaterial({ color: '#334155', roughness: 0.7 }),
-  );
-  housing.position.set(0, -radius * 0.95, 0);
-  group.add(housing);
+  // Soft glow halo — a camera-facing sprite instead of the old ray spokes.
+  const glowTexture = getGlowTexture();
+  const glowMaterial = new THREE.SpriteMaterial({
+    map: glowTexture ?? undefined,
+    color: GLOW_COLOR,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const glow = new THREE.Sprite(glowMaterial);
+  glow.position.copy(bulbPos);
+  glow.scale.setScalar(radius * 7);
+  group.add(glow);
 
-  const rayCount = 8;
-  const rayLength = radius * 0.9;
-  const rayGeometry = new THREE.CylinderGeometry(radius * 0.06, radius * 0.06, rayLength, 6);
-  const rayMaterial = decorationMaterial(NIGHT_COLOR.clone(), 0.85);
-  const rayGroup = new THREE.Group();
-  for (let i = 0; i < rayCount; i += 1) {
-    const angle = (i / rayCount) * Math.PI * 2;
-    const ray = new THREE.Mesh(rayGeometry, rayMaterial);
-    const inner = radius * 1.15;
-    const outer = inner + rayLength;
-    const mid = (inner + outer) / 2;
-    ray.position.set(Math.cos(angle) * mid, 0, Math.sin(angle) * mid);
-    // Cylinders default to standing on Y; lay them flat and point outward.
-    ray.rotation.z = Math.PI / 2;
-    ray.rotation.y = -angle;
-    rayGroup.add(ray);
+  // Casts real light onto the model/other markers nearby at night — this is
+  // what makes the lamp brighten its surroundings instead of just glowing
+  // itself. Off (intensity 0) by day. Skipped entirely (not just left at
+  // zero intensity) when `castLight` is false, since even a dark light
+  // still costs a shader pass — the viewer caps how many of these get
+  // built at once for scenes with a lot of light sensors.
+  let pointLight: THREE.PointLight | null = null;
+  if (castLight) {
+    pointLight = new THREE.PointLight(NIGHT_BULB.clone(), 0, radius * 40, 1);
+    pointLight.position.copy(bulbPos);
+    group.add(pointLight);
   }
-  // Rays exist only at night — by day the light is switched off, so there's
-  // nothing radiating out from it at all, not just a dim version of it.
-  rayGroup.visible = false;
-  group.add(rayGroup);
 
   const update = (elapsed: number, isNight: boolean) => {
     // Smoothly fades the bulb colour between day/night rather than
     // snapping, so flipping the toggle doesn't look like a hard cut.
-    const target = isNight ? NIGHT_COLOR : DAY_COLOR;
-    material.color.lerp(target, 0.08);
-    material.emissive.lerp(target, 0.08);
+    const target = isNight ? NIGHT_BULB : DAY_BULB;
+    bulbMaterial.color.lerp(target, 0.08);
+    bulbMaterial.emissive.lerp(target, 0.08);
 
     if (isNight) {
-      // Kept modest on purpose: with the scene's environment lighting and
-      // renderer exposure now also dimmed for Night (see the isNight effect
-      // in the main viewer), a bulb tuned to blow out against a bright Day
-      // scene reads as way too luminous against the now much darker Night
-      // scene — this glow should stand out against the dark, not wash it out.
-      material.emissiveIntensity = 0.4 + Math.sin(elapsed * 3) * 0.15;
-      rayGroup.visible = true;
-      rayMaterial.opacity = 0.55 + Math.sin(elapsed * 3) * 0.15;
-      rayGroup.rotation.y = elapsed * 0.15;
+      const flicker = 0.9 + Math.sin(elapsed * 3) * 0.1;
+      bulbMaterial.emissiveIntensity = 0.6 * flicker;
+      glowMaterial.opacity += (0.55 * flicker - glowMaterial.opacity) * 0.15;
+      if (pointLight) {
+        pointLight.intensity += (radius * 45 * flicker - pointLight.intensity) * 0.15;
+      }
     } else {
-      material.emissiveIntensity = 0.05;
-      rayGroup.visible = false;
+      bulbMaterial.emissiveIntensity = 0.05;
+      glowMaterial.opacity += (0 - glowMaterial.opacity) * 0.15;
+      if (pointLight) {
+        pointLight.intensity += (0 - pointLight.intensity) * 0.15;
+      }
     }
   };
 
-  return { group, coreMesh, update };
+  return { group, coreMesh, update, labelOffsetY: poleHeight + radius * 1.3 };
 }
 
 /** Pole-mounted dust / air-quality sensor: a pulsing head, a scattered
@@ -492,9 +575,18 @@ function buildNoise(color: THREE.Color, radius: number): BuiltMarker {
   return { group, coreMesh, update, labelOffsetY: poleHeight + radius * 1.6 };
 }
 
+/** Per-marker build options — currently only used by the `light` shape. */
+export interface MarkerShapeOptions {
+  /** Whether this light marker gets a real `THREE.PointLight` (see
+   * `buildLight`). Defaults to true; the viewer caps how many markers get
+   * one so a scene with many light sensors doesn't accumulate dozens of
+   * live lights. Ignored by every shape except `light`. */
+  castLight?: boolean;
+}
+
 const BUILDERS: Record<
   MarkerShapeId,
-  (color: THREE.Color, radius: number) => BuiltMarker
+  (color: THREE.Color, radius: number, options?: MarkerShapeOptions) => BuiltMarker
 > = {
   sphere: buildSphere,
   pin: buildPin,
@@ -509,7 +601,8 @@ export function buildMarkerShape(
   shape: MarkerShapeId | string | undefined,
   color: THREE.Color,
   radius: number,
+  options?: MarkerShapeOptions,
 ): BuiltMarker {
   const builder = BUILDERS[(shape as MarkerShapeId) || DEFAULT_MARKER_SHAPE];
-  return (builder || buildSphere)(color, radius);
+  return (builder || buildSphere)(color, radius, options);
 }

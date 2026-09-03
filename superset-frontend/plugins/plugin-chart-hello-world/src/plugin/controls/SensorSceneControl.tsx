@@ -313,6 +313,20 @@ export default function SensorSceneControl({
   );
 
   /**
+   * Model position/rotation/scale — a scene isn't required to exist yet
+   * (same upsert-on-first-edit approach as `updateDevice`/`updateLocation`),
+   * since a model loaded purely via the "3D Model URL" field with no
+   * uploaded JSON still needs a place to store a correction.
+   */
+  const updateModelTransform = useCallback(
+    (patch: Partial<Pick<SceneData, 'modelOffset' | 'modelRotation' | 'modelScale'>>) => {
+      const current: SceneData = sceneRef.current ?? { devices: [] };
+      applyScene({ ...current, ...patch });
+    },
+    [applyScene],
+  );
+
+  /**
    * One-location-per-device assignment, written as a single pass over the
    * `pois` array so a device is never briefly (or permanently, if a second
    * write races) a member of two locations at once. Checking a device in
@@ -637,6 +651,119 @@ export default function SensorSceneControl({
           {error}
         </div>
       )}
+
+      {(() => {
+        const offset = scene?.modelOffset ?? [0, 0, 0];
+        const rotationDeg = scene?.modelRotation ?? [0, 0, 0];
+        const scale = scene?.modelScale ?? 1;
+        const isDefault =
+          offset.every(n => (n || 0) === 0) &&
+          rotationDeg.every(n => (n || 0) === 0) &&
+          scale === 1;
+        return (
+          <div
+            style={{
+              marginTop: 12,
+              border: '1px solid #e2e8f0',
+              borderRadius: 4,
+              padding: 8,
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 2 }}>
+              Model Position &amp; Orientation
+            </div>
+            <div style={{ fontSize: 11, color: '#8e94a1', marginBottom: 6 }}>
+              Fixes a model that loads off-centre, sideways, or facing the
+              wrong way (e.g. head to the left) — applied to the whole
+              loaded model, on top of whatever the file itself contains.
+            </div>
+
+            <div style={rowStyle}>
+              <span style={fieldLabelStyle}>Position</span>
+              <div style={{ display: 'flex', gap: 4, flex: 1, minWidth: 0 }}>
+                {(['X', 'Y', 'Z'] as const).map((axisLabel, axis) => (
+                  <input
+                    key={axisLabel}
+                    type="number"
+                    step={0.1}
+                    aria-label={`Model position ${axisLabel}`}
+                    value={offset[axis] ?? 0}
+                    onChange={e => {
+                      const next: [number, number, number] = [...offset] as [
+                        number,
+                        number,
+                        number,
+                      ];
+                      next[axis] = Number(e.target.value) || 0;
+                      updateModelTransform({ modelOffset: next });
+                    }}
+                    style={numberInputStyle}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div style={rowStyle}>
+              <span style={fieldLabelStyle}>Rotation°</span>
+              <div style={{ display: 'flex', gap: 4, flex: 1, minWidth: 0 }}>
+                {(['X', 'Y', 'Z'] as const).map((axisLabel, axis) => (
+                  <input
+                    key={axisLabel}
+                    type="number"
+                    step={1}
+                    aria-label={`Model rotation ${axisLabel}, degrees`}
+                    value={rotationDeg[axis] ?? 0}
+                    onChange={e => {
+                      const next: [number, number, number] = [...rotationDeg] as [
+                        number,
+                        number,
+                        number,
+                      ];
+                      next[axis] = Number(e.target.value) || 0;
+                      updateModelTransform({ modelRotation: next });
+                    }}
+                    style={numberInputStyle}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div style={rowStyle}>
+              <span style={fieldLabelStyle}>Scale</span>
+              <input
+                type="number"
+                step={0.01}
+                min={0.001}
+                aria-label="Model scale"
+                value={scale}
+                onChange={e => {
+                  const next = Number(e.target.value);
+                  updateModelTransform({
+                    modelScale: Number.isFinite(next) && next > 0 ? next : 1,
+                  });
+                }}
+                style={{ ...numberInputStyle, width: 74, flexShrink: 0 }}
+              />
+            </div>
+
+            {!isDefault && (
+              <button
+                type="button"
+                onClick={() =>
+                  updateModelTransform({
+                    modelOffset: [0, 0, 0],
+                    modelRotation: [0, 0, 0],
+                    modelScale: 1,
+                  })
+                }
+                style={{ ...buttonStyle, marginTop: 4, color: '#b91c1c' }}
+              >
+                Reset to default position
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {devices.length === 0 && (
         <div style={{ fontSize: 11, color: '#8e94a1', marginTop: 8 }}>
