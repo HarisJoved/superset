@@ -76,6 +76,19 @@ function colorPropToHex(value: RgbaColor | string | undefined, fallback: string)
   return fallback;
 }
 
+/** Faux text-stroke via a ring of eight offset shadow copies — works in
+ * every browser, unlike `-webkit-text-stroke` (Chromium/Safari only),
+ * which the header applies alongside this as a crisper enhancement where
+ * it's supported. */
+function strokeTextShadow(color: string): string {
+  const offsets = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1, 0], [1, 0],
+    [-1, 1], [0, 1], [1, 1],
+  ];
+  return offsets.map(([x, y]) => `${x}px ${y}px 0 ${color}`).join(', ');
+}
+
 const filterSelectStyle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
@@ -300,6 +313,9 @@ export default function SupersetPluginChartHelloWorld(
     boldText,
     headerFontSize,
     headerText,
+    headerTextColor,
+    headerStroke,
+    headerStrokeColor,
     sceneDataJson,
     dayBackgroundColor,
     nightBackgroundColor,
@@ -588,8 +604,19 @@ export default function SupersetPluginChartHelloWorld(
     if (savedView) {
       const savedPosition = new THREE.Vector3(...savedView.position);
       const savedTarget = new THREE.Vector3(...savedView.target);
+      // `up` didn't exist on defaultView before this fix — falls back to
+      // world-up for anything saved prior, same as it always implicitly was.
+      const savedUp = new THREE.Vector3(...(savedView.up || [0, 1, 0]));
       const dist = Math.max(savedPosition.distanceTo(savedTarget), 1e-4);
       camera.position.copy(savedPosition);
+      // Restoring `up` before `lookAt` matters: TrackballControls lets the
+      // camera roll freely while orbiting (that's what makes rotating past
+      // the zenith/nadir possible), so by the time this runs `camera.up`
+      // may have drifted away from whatever it was when the view was saved
+      // — without resetting it first, `lookAt` recomputes the view using
+      // today's (possibly rolled) up instead of the one the user actually
+      // set as default, and the model comes back tilted.
+      camera.up.copy(savedUp);
       camera.near = Math.max(dist / 200, 1e-6);
       camera.far = dist * 30 + radius * 10;
       camera.updateProjectionMatrix();
@@ -601,6 +628,12 @@ export default function SupersetPluginChartHelloWorld(
       controls.update();
       return;
     }
+
+    // Reset roll for the auto-fit path too — without a saved default view,
+    // "reset" should always mean the same clean, level framing, not
+    // whatever roll TrackballControls' free rotation happened to leave
+    // `camera.up` at.
+    camera.up.set(0, 1, 0);
 
     // Pleasant three-quarter view. The camera always sits exactly `distance`
     // along this direction from the centre.
@@ -663,18 +696,28 @@ export default function SupersetPluginChartHelloWorld(
   frameCameraRef.current = frameCamera;
 
   /**
-   * Points the camera at `center` from `distance` away, along the same
-   * three-quarter angle `frameCamera` uses for the whole-model fit. Shared
-   * by `flyToLocation` and `focusOnDevice`, which only differ in how they
-   * compute `center`/`distance`.
+   * Points the camera at `center` from `distance` away, along `direction`
+   * (defaults to the same three-quarter angle `frameCamera` uses for the
+   * whole-model fit). Shared by `flyToLocation` and `focusOnDevice`, which
+   * only differ in how they compute `center`/`distance`/`direction`.
    */
-  function pointCameraAt(center: THREE.Vector3, distance: number) {
+  function pointCameraAt(
+    center: THREE.Vector3,
+    distance: number,
+    direction: THREE.Vector3 = new THREE.Vector3(1, 0.55, 1),
+  ) {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
 
-    const direction = new THREE.Vector3(1, 0.55, 1).normalize();
-    camera.position.copy(center).add(direction.clone().multiplyScalar(distance));
+    // Same drift-reset as frameCamera's auto-fit path: without this, a
+    // jump-to-location/sensor-focus shot inherits whatever roll
+    // TrackballControls' free rotation left the camera at, instead of
+    // coming in level.
+    camera.up.set(0, 1, 0);
+
+    const dir = direction.clone().normalize();
+    camera.position.copy(center).add(dir.multiplyScalar(distance));
     camera.near = Math.max(distance / 200, 1e-6);
     camera.far = distance * 30 + distance * 10;
     camera.updateProjectionMatrix();
@@ -721,7 +764,11 @@ export default function SupersetPluginChartHelloWorld(
         ? device.markerSize
         : worldSize * 0.012;
     const distance = Math.max(radius * 10, worldSize * 0.06);
-    pointCameraAt(center, distance);
+    // Flatter and more side-on than the general three-quarter angle
+    // (lower Y, more weighted to X) — a sensor focused dead-on/from-above
+    // reads as staring straight into the marker; coming in more from the
+    // side keeps its pole/orientation and surrounding context legible.
+    pointCameraAt(center, distance, new THREE.Vector3(1.4, 0.35, 0.5));
   }
   // The click handler below lives in an effect keyed on `pickTarget`, not on
   // every render, so it can't just close over `focusOnDevice` directly (that
@@ -790,6 +837,7 @@ export default function SupersetPluginChartHelloWorld(
     emitSetDefaultView({
       position: [camera.position.x, camera.position.y, camera.position.z],
       target: [controls.target.x, controls.target.y, controls.target.z],
+      up: [camera.up.x, camera.up.y, camera.up.z],
     });
     setDefaultViewSaved(true);
     window.setTimeout(() => setDefaultViewSaved(false), 1800);
@@ -895,7 +943,53 @@ export default function SupersetPluginChartHelloWorld(
     controls.panSpeed = 0.6;
     controls.staticMoving = false;
     controls.dynamicDampingFactor = 0.15;
+    // TrackballControls' built-in wheel zoom always dollies toward/away from
+    // the fixed orbit target (the model's centre), which makes zooming in on
+    // anything off-centre awkward — you zoom toward the middle of the model,
+    // not toward whatever's under the cursor. Replaced below with a custom
+    // wheel handler that raycasts to find what's under the cursor and dollies
+    // toward that instead.
+    controls.noZoom = true;
     controlsRef.current = controls;
+
+    // Scroll-to-zoom, but toward whatever's under the cursor rather than the
+    // fixed orbit target — raycasts the model/markers at the pointer, and if
+    // it hits something, dollies toward that point and gradually re-centres
+    // the orbit target on it too (so a follow-up drag orbits around the area
+    // just zoomed into, not the model's original centre). Falls back to the
+    // old target-based zoom when the cursor isn't over the model at all
+    // (e.g. zooming out from empty space) — the sensible default there.
+    const handleWheelZoom = (event: WheelEvent) => {
+      const cam = cameraRef.current;
+      const ctrl = controlsRef.current;
+      if (!cam || !ctrl) return;
+      event.preventDefault();
+
+      const hit = [
+        ...raycastModelAt(event.clientX, event.clientY),
+        ...raycastMarkersAt(event.clientX, event.clientY),
+      ].sort((a, b) => a.distance - b.distance)[0];
+      const focusPoint = hit ? hit.point : ctrl.target.clone();
+
+      // Smooth exponential dolly: positive deltaY (scroll down) zooms out,
+      // negative zooms in — feels closer to native trackpad/wheel zoom than
+      // a fixed-step in/out factor.
+      const factor = Math.exp(event.deltaY * 0.0012);
+      const offset = cam.position.clone().sub(focusPoint);
+      const nextDistance = Math.min(
+        Math.max(offset.length() * factor, ctrl.minDistance),
+        ctrl.maxDistance,
+      );
+      offset.setLength(nextDistance);
+      cam.position.copy(focusPoint).add(offset);
+
+      // Partial blend, not a hard snap, so continuing to scroll homes in on
+      // the cursor's point smoothly instead of the pivot "teleporting" there
+      // in one jump.
+      ctrl.target.lerp(focusPoint, 0.12);
+      ctrl.update();
+    };
+    renderer.domElement.addEventListener('wheel', handleWheelZoom, { passive: false });
 
     clockRef.current = new THREE.Clock();
     const animate = () => {
@@ -919,6 +1013,7 @@ export default function SupersetPluginChartHelloWorld(
 
     return () => {
       cancelAnimationFrame(animationFrameRef.current);
+      renderer.domElement.removeEventListener('wheel', handleWheelZoom);
       controls.dispose();
       renderer.dispose();
       if (container.contains(renderer.domElement)) {
@@ -1299,9 +1394,19 @@ export default function SupersetPluginChartHelloWorld(
           zIndex: 2,
           fontSize: currentFontSize,
           fontWeight: boldText ? 700 : 400,
-          color: '#0f172a',
+          color: colorPropToHex(headerTextColor, '#0f172a'),
           letterSpacing: '-0.02em',
-          textShadow: '0 1px 2px rgba(255,255,255,0.8)',
+          textShadow: headerStroke
+            ? // Faux stroke: eight offset copies of the text in the stroke
+              // colour, layered underneath the real text via the shadow
+              // stack. `-webkit-text-stroke` alone renders crisper but only
+              // works in Chromium/Safari, so it's paired with this shadow
+              // stack (below) as the everywhere-compatible fallback/base.
+              strokeTextShadow(colorPropToHex(headerStrokeColor, '#ffffff'))
+            : '0 1px 2px rgba(255,255,255,0.8)',
+          WebkitTextStroke: headerStroke
+            ? `1px ${colorPropToHex(headerStrokeColor, '#ffffff')}`
+            : undefined,
           pointerEvents: 'none',
         }}
       >

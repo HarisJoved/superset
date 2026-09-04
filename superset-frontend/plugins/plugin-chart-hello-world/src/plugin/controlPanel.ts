@@ -282,6 +282,18 @@ const config: ControlPanelConfig = {
         ],
         [
           {
+            name: 'header_text_color',
+            config: {
+              type: 'ColorPickerControl',
+              default: { r: 15, g: 23, b: 42, a: 1 },
+              renderTrigger: true,
+              label: t('Header Text Color'),
+              description: t('Colour of the header caption text.'),
+            },
+          },
+        ],
+        [
+          {
             name: 'bold_text',
             config: {
               type: 'CheckboxControl',
@@ -289,6 +301,30 @@ const config: ControlPanelConfig = {
               renderTrigger: true,
               default: true,
               description: t('A checkbox to make the header bold'),
+            },
+          },
+          {
+            name: 'header_stroke',
+            config: {
+              type: 'CheckboxControl',
+              label: t('Header Text Stroke'),
+              renderTrigger: true,
+              default: false,
+              description: t(
+                'Outlines the header text so it stays readable over a busy or similarly-coloured background.',
+              ),
+            },
+          },
+        ],
+        [
+          {
+            name: 'header_stroke_color',
+            config: {
+              type: 'ColorPickerControl',
+              default: { r: 255, g: 255, b: 255, a: 1 },
+              renderTrigger: true,
+              label: t('Header Text Stroke Color'),
+              description: t('Only used when Header Text Stroke is on.'),
             },
           },
         ],

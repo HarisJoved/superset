@@ -86,6 +86,9 @@ export interface SceneData {
   defaultView?: {
     position: [number, number, number];
     target: [number, number, number];
+    /** Camera "up" vector at save time — see the matching comment on
+     * `DefaultView` in sensorEditorBridge.ts for why this is needed. */
+    up: [number, number, number];
   };
   /** Saved camera bookmarks — named points in the model the viewer's
    * Location filter can jump the camera to. */
@@ -132,6 +135,13 @@ export interface RgbaColor {
 
 interface SupersetPluginChartHelloWorldCustomizeProps {
   headerText: string;
+  /** Header caption colour. Same {r,g,b,a} | hex acceptance as the
+   * background colour props, for the same backward-compatibility reason. */
+  headerTextColor?: RgbaColor | string;
+  /** Outlines the header text for readability over a busy/similar-coloured
+   * background. Off by default (matches the previous, stroke-less look). */
+  headerStroke?: boolean;
+  headerStrokeColor?: RgbaColor | string;
   sceneDataJson: string;
   /** Viewer background while Day mode is active. Accepts the ColorPickerControl's
    * {r,g,b,a} shape, or a plain hex string for backward compatibility with
