@@ -25,6 +25,26 @@
 const ALERTS_BASE = 'https://home.snap4idtcity.com/5508enb-y315/api/mining-dashboard-alerts';
 const ALERTS_URL = `${ALERTS_BASE}?limit=1000&sortBy=createdAt&sortOrder=desc`;
 
+// Same reasoning as api.ts's fetchWithTimeout: a plain fetch() never times
+// out on its own, so a hanging alerts endpoint would otherwise leave the
+// Alerts panel "loading" forever.
+const REQUEST_TIMEOUT_MS = 15000;
+
+async function fetchWithTimeout(url: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface AlertRecord {
   id: string;
   message: string;
@@ -98,7 +118,7 @@ function parseAlertsResponse(json: unknown): AlertsResult {
 }
 
 export async function fetchAlerts(): Promise<AlertsResult> {
-  const res = await fetch(ALERTS_URL);
+  const res = await fetchWithTimeout(ALERTS_URL);
   if (!res.ok) {
     throw new Error(`Alerts request failed (${res.status})`);
   }
@@ -116,8 +136,8 @@ export async function fetchAlertsForDevice(
 ): Promise<AlertsResult> {
   const url = `${ALERTS_BASE}?deviceId=${encodeURIComponent(
     deviceId,
-  )}&limit=${limit}&sortBy=dateObserved&sortOrder=desc`;
-  const res = await fetch(url);
+  )}&limit=${encodeURIComponent(String(limit))}&sortBy=dateObserved&sortOrder=desc`;
+  const res = await fetchWithTimeout(url);
   if (!res.ok) {
     throw new Error(`Alerts request failed (${res.status})`);
   }

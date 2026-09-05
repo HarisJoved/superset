@@ -101,25 +101,10 @@ const filterSelectStyle: React.CSSProperties = {
   maxWidth: 190,
 };
 
-/** One button of the compact orbit d-pad — small and square by design, so
- * the whole 3x3 cluster stays under 90px across. */
-const navPadButtonStyle: React.CSSProperties = {
-  width: 26,
-  height: 26,
-  fontSize: 10,
-  lineHeight: 1,
-  color: '#334155',
-  background: 'rgba(255,255,255,0.9)',
-  border: '1px solid #cbd5e1',
-  borderRadius: 4,
-  cursor: 'pointer',
-  padding: 0,
-};
-
-/** One button of the stacked zoom +/- bar underneath the orbit d-pad. */
+/** One button of the bottom-right reset/zoom bar. */
 const navBarButtonStyle: React.CSSProperties = {
   width: 26,
-  height: 22,
+  height: 24,
   fontSize: 13,
   fontWeight: 700,
   lineHeight: 1,
@@ -337,6 +322,15 @@ export default function SupersetPluginChartHelloWorld(
   const controlsRef = useRef<TrackballControls | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const modelGroupRef = useRef<THREE.Group | null>(null);
+  /** Persistent parent for both the loaded GLB and the device/marker group —
+   * created once at mount and never recreated on model reload, unlike
+   * `modelGroupRef` (the disposable per-load GLTF content wrapper). Carries
+   * the Model Position & Orientation transform (`sceneData.modelOffset` /
+   * `modelRotation` / `modelScale`). Parenting markers under this instead of
+   * directly under the scene is what makes them move/rotate with the model
+   * when that transform changes, instead of staying fixed in raw world
+   * space while the model rotates out from under them. */
+  const modelTransformGroupRef = useRef<THREE.Group | null>(null);
   const deviceGroupRef = useRef<THREE.Group | null>(null);
   const markerMeshesRef = useRef<THREE.Mesh[]>([]);
   const markerAnimRef = useRef<MarkerAnimEntry[]>([]);
@@ -347,6 +341,23 @@ export default function SupersetPluginChartHelloWorld(
   const clockRef = useRef<THREE.Clock>(new THREE.Clock());
   const ambientLightRef = useRef<THREE.AmbientLight | null>(null);
   const directionalLightRef = useRef<THREE.DirectionalLight | null>(null);
+  /** Active camera fly-to animation, consumed one frame at a time by the
+   * main animate loop — see `animateCameraTo`. Null when the camera is
+   * under normal TrackballControls control (the common case). */
+  const cameraTransitionRef = useRef<{
+    fromPosition: THREE.Vector3;
+    toPosition: THREE.Vector3;
+    fromTarget: THREE.Vector3;
+    toTarget: THREE.Vector3;
+    startTime: number;
+    duration: number;
+  } | null>(null);
+  /** Set true by the custom rotate-drag handler once a drag has moved more
+   * than a few pixels, so the `click` event the browser fires right after
+   * mouseup doesn't also get treated as a marker click/pick — otherwise
+   * every orbit drag that happened to start or end on a marker would also
+   * select/deselect it or drop a pin. Cleared by that same click handler. */
+  const suppressClickRef = useRef(false);
   // Mirrors `isNight` state into a ref so the mount-only animate loop can
   // read the current value without re-subscribing every toggle.
   const isNightRef = useRef(false);
@@ -574,6 +585,7 @@ export default function SupersetPluginChartHelloWorld(
     const controls = controlsRef.current;
     const scene = sceneRef.current;
     if (!camera || !controls || !scene) return;
+    cameraTransitionRef.current = null; // a hard reset always wins over an in-flight fly-to
 
     // Prefer framing on the model alone. Devices can sit well outside the
     // model (bad coordinates, or not yet positioned) and would otherwise
@@ -696,38 +708,61 @@ export default function SupersetPluginChartHelloWorld(
   frameCameraRef.current = frameCamera;
 
   /**
-   * Points the camera at `center` from `distance` away, along `direction`
-   * (defaults to the same three-quarter angle `frameCamera` uses for the
-   * whole-model fit). Shared by `flyToLocation` and `focusOnDevice`, which
-   * only differ in how they compute `center`/`distance`/`direction`.
+   * Eases the camera from wherever it currently is to `toPosition`/
+   * `toTarget` over `duration` seconds — consumed one frame at a time by
+   * the main animate loop. Cancelled (see `cameraTransitionRef`'s comment)
+   * the moment the user manually drags/zooms, so it never fights a
+   * deliberate camera move.
    */
-  function pointCameraAt(
-    center: THREE.Vector3,
-    distance: number,
-    direction: THREE.Vector3 = new THREE.Vector3(1, 0.55, 1),
+  function animateCameraTo(
+    toPosition: THREE.Vector3,
+    toTarget: THREE.Vector3,
+    duration = 0.55,
   ) {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
+    cameraTransitionRef.current = {
+      fromPosition: camera.position.clone(),
+      toPosition: toPosition.clone(),
+      fromTarget: controls.target.clone(),
+      toTarget: toTarget.clone(),
+      startTime: clockRef.current.getElapsedTime(),
+      duration,
+    };
+  }
 
-    // Same drift-reset as frameCamera's auto-fit path: without this, a
-    // jump-to-location/sensor-focus shot inherits whatever roll
-    // TrackballControls' free rotation left the camera at, instead of
-    // coming in level.
-    camera.up.set(0, 1, 0);
+  /**
+   * Points the camera at `center` from `distance` away, preserving
+   * whichever direction the camera is currently looking from rather than
+   * jumping to a fixed preset angle — so focusing a sensor or jumping to a
+   * bookmarked location reads as zooming in from wherever the user already
+   * was, not teleporting to a new, disorienting angle. Shared by
+   * `flyToLocation` and `focusOnDevice`, which only differ in how they
+   * compute `center`/`distance`.
+   */
+  function pointCameraAt(center: THREE.Vector3, distance: number) {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
 
-    const dir = direction.clone().normalize();
-    camera.position.copy(center).add(dir.multiplyScalar(distance));
+    const currentOffset = camera.position.clone().sub(controls.target);
+    // Falls back to the whole-model three-quarter angle only when there's
+    // no meaningful current direction to preserve (camera sitting exactly
+    // on its target — shouldn't normally happen, but keeps this safe).
+    const direction =
+      currentOffset.lengthSq() > 1e-6
+        ? currentOffset.normalize()
+        : new THREE.Vector3(1, 0.55, 1).normalize();
+    const toPosition = center.clone().add(direction.multiplyScalar(distance));
+
     camera.near = Math.max(distance / 200, 1e-6);
     camera.far = distance * 30 + distance * 10;
     camera.updateProjectionMatrix();
-    camera.lookAt(center);
-    camera.updateMatrixWorld();
-
-    controls.target.copy(center);
     controls.minDistance = distance * 0.02;
     controls.maxDistance = Math.max(controls.maxDistance, distance * 20);
-    controls.update();
+
+    animateCameraTo(toPosition, center);
   }
 
   /**
@@ -764,11 +799,7 @@ export default function SupersetPluginChartHelloWorld(
         ? device.markerSize
         : worldSize * 0.012;
     const distance = Math.max(radius * 10, worldSize * 0.06);
-    // Flatter and more side-on than the general three-quarter angle
-    // (lower Y, more weighted to X) — a sensor focused dead-on/from-above
-    // reads as staring straight into the marker; coming in more from the
-    // side keeps its pole/orientation and surrounding context legible.
-    pointCameraAt(center, distance, new THREE.Vector3(1.4, 0.35, 0.5));
+    pointCameraAt(center, distance);
   }
   // The click handler below lives in an effect keyed on `pickTarget`, not on
   // every render, so it can't just close over `focusOnDevice` directly (that
@@ -779,35 +810,23 @@ export default function SupersetPluginChartHelloWorld(
   focusOnDeviceRef.current = focusOnDevice;
 
   /**
-   * Orbit/zoom nudges for the compact on-canvas navigation widget — mouse
-   * drag (orbit), scroll (zoom) and right-drag (pan) already work via
-   * TrackballControls, but those aren't discoverable and are awkward on a
-   * trackpad, hence explicit buttons. Both nudges work the same way: read
-   * the camera's offset from the controls' orbit target as a spherical
-   * coordinate, adjust it, write it back, then let `controls.update()`
-   * reconcile its internal state — the same pattern `pointCameraAt` uses,
-   * just relative to the current view instead of framing a new target.
+   * Zoom nudge for the bottom-right reset/zoom buttons — mouse drag
+   * (orbit), scroll (zoom, now toward the cursor — see `handleWheelZoom`
+   * in the mount effect) and right-drag (pan) already work via
+   * TrackballControls, but scroll/drag aren't discoverable and are
+   * awkward on a trackpad, hence an explicit button. There used to be an
+   * orbit d-pad here too, computed as a spherical offset around world "up".
+   * That math assumes the camera's actual up vector is close to world-up,
+   * which TrackballControls doesn't guarantee (it lets the camera roll
+   * freely so rotation is never stuck at the poles) — so the four arrow
+   * buttons could end up pointing in a different on-screen direction than
+   * they claimed, hence removed rather than fixed to only sometimes work.
    */
-  function nudgeOrbit(deltaAzimuth: number, deltaPolar: number) {
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    if (!camera || !controls) return;
-    const offset = camera.position.clone().sub(controls.target);
-    const spherical = new THREE.Spherical().setFromVector3(offset);
-    spherical.theta += deltaAzimuth;
-    // Clamped just shy of the poles so the camera can't flip past straight
-    // up/down, which is disorienting with no gimbal lock protection.
-    spherical.phi = Math.min(Math.max(spherical.phi + deltaPolar, 0.05), Math.PI - 0.05);
-    offset.setFromSpherical(spherical);
-    camera.position.copy(controls.target).add(offset);
-    camera.lookAt(controls.target);
-    controls.update();
-  }
-
   function nudgeZoom(factor: number) {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
+    cameraTransitionRef.current = null;
     const offset = camera.position.clone().sub(controls.target);
     const distance = offset.length();
     const nextDistance = Math.min(
@@ -888,6 +907,12 @@ export default function SupersetPluginChartHelloWorld(
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
+    // Persistent parent for the model + its markers — see the ref's own
+    // comment for why this needs to outlive individual model (re)loads.
+    const modelTransformGroup = new THREE.Group();
+    scene.add(modelTransformGroup);
+    modelTransformGroupRef.current = modelTransformGroup;
+
     const camera = new THREE.PerspectiveCamera(
       50,
       container.clientWidth / Math.max(container.clientHeight, 1),
@@ -936,10 +961,9 @@ export default function SupersetPluginChartHelloWorld(
     // past the zenith/nadir just stops responding — reads as the view
     // getting "stuck". TrackballControls has no such pole, so the model can
     // be rotated freely in any direction, including all the way over the
-    // top, with the mouse.
+    // top, with the mouse. Its own built-in rotate is disabled below though
+    // (see `handleRotateDrag`) — only pan (right-drag) is left to it now.
     const controls = new TrackballControls(camera, renderer.domElement);
-    controls.rotateSpeed = 3.2;
-    controls.zoomSpeed = 1.2;
     controls.panSpeed = 0.6;
     controls.staticMoving = false;
     controls.dynamicDampingFactor = 0.15;
@@ -950,7 +974,90 @@ export default function SupersetPluginChartHelloWorld(
     // wheel handler that raycasts to find what's under the cursor and dollies
     // toward that instead.
     controls.noZoom = true;
+    // TrackballControls' built-in rotate projects the cursor onto a virtual
+    // "trackball" sphere and rotates however far that projected point moved
+    // — near the centre of the screen (where the model usually sits) that
+    // mapping is much more sensitive than near the edges, so dragging
+    // directly on the model felt like grabbing and dragging the model
+    // itself rather than smoothly orbiting the camera around it. Replaced
+    // below with a custom handler that rotates by a fixed amount per pixel
+    // of mouse movement, regardless of where on screen the drag is —
+    // consistent everywhere, and still has no pole lock (see above).
+    controls.noRotate = true;
     controlsRef.current = controls;
+
+    // Custom delta-based orbit rotate (left mouse button / primary touch),
+    // replacing TrackballControls' built-in rotate for the reason above.
+    // Rotates the camera's position *and* up vector together around the
+    // orbit target using small incremental quaternions — the same trick
+    // that lets TrackballControls itself rotate past the poles with no
+    // gimbal lock, just driven by mouse delta instead of absolute cursor
+    // position on a virtual sphere.
+    let isRotating = false;
+    let lastX = 0;
+    let lastY = 0;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    const ROTATE_SPEED = 0.006;
+    const CLICK_DRAG_THRESHOLD = 4; // px
+
+    const handleRotateStart = (event: PointerEvent) => {
+      if (event.button !== 0) return; // left button / primary touch only
+      isRotating = true;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      dragStartX = event.clientX;
+      dragStartY = event.clientY;
+    };
+
+    const handleRotateMove = (event: PointerEvent) => {
+      if (!isRotating) return;
+      const dx = event.clientX - lastX;
+      const dy = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+
+      const totalDrag = Math.hypot(
+        event.clientX - dragStartX,
+        event.clientY - dragStartY,
+      );
+      if (totalDrag > CLICK_DRAG_THRESHOLD) {
+        suppressClickRef.current = true;
+      }
+      if (dx === 0 && dy === 0) return;
+
+      const cam = cameraRef.current;
+      const ctrl = controlsRef.current;
+      if (!cam || !ctrl) return;
+      cameraTransitionRef.current = null; // a manual drag always wins over an in-flight fly-to
+
+      const offset = cam.position.clone().sub(ctrl.target);
+      const yaw = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        -dx * ROTATE_SPEED,
+      );
+      const right = new THREE.Vector3().setFromMatrixColumn(cam.matrix, 0);
+      const pitch = new THREE.Quaternion().setFromAxisAngle(right, -dy * ROTATE_SPEED);
+
+      offset.applyQuaternion(yaw).applyQuaternion(pitch);
+      cam.up.applyQuaternion(yaw).applyQuaternion(pitch);
+      cam.position.copy(ctrl.target).add(offset);
+      cam.lookAt(ctrl.target);
+      ctrl.update();
+    };
+
+    const handleRotateEnd = () => {
+      isRotating = false;
+    };
+
+    renderer.domElement.addEventListener('pointerdown', handleRotateStart);
+    // Move/up listen on window, not just the canvas, so a drag that leaves
+    // the canvas mid-gesture (dragging out past the model/off the edge)
+    // keeps tracking correctly instead of getting stuck "still rotating"
+    // once the cursor comes back, or stopping the moment it crosses the
+    // canvas boundary.
+    window.addEventListener('pointermove', handleRotateMove);
+    window.addEventListener('pointerup', handleRotateEnd);
 
     // Scroll-to-zoom, but toward whatever's under the cursor rather than the
     // fixed orbit target — raycasts the model/markers at the pointer, and if
@@ -964,6 +1071,7 @@ export default function SupersetPluginChartHelloWorld(
       const ctrl = controlsRef.current;
       if (!cam || !ctrl) return;
       event.preventDefault();
+      cameraTransitionRef.current = null;
 
       const hit = [
         ...raycastModelAt(event.clientX, event.clientY),
@@ -1005,6 +1113,22 @@ export default function SupersetPluginChartHelloWorld(
         if (entry.update) entry.update(elapsed, night);
       });
 
+      // Camera fly-to in progress (sensor focus, location jump) — eases
+      // position/target from where the camera was to the target over
+      // `duration` seconds, so focusing a sensor reads as zooming in from
+      // wherever you were looking, not teleporting to a fresh preset angle.
+      const transition = cameraTransitionRef.current;
+      if (transition) {
+        const t = Math.min(
+          (elapsed - transition.startTime) / transition.duration,
+          1,
+        );
+        const eased = 1 - (1 - t) ** 3; // ease-out cubic: fast start, gentle settle
+        camera.position.lerpVectors(transition.fromPosition, transition.toPosition, eased);
+        controls.target.lerpVectors(transition.fromTarget, transition.toTarget, eased);
+        if (t >= 1) cameraTransitionRef.current = null;
+      }
+
       controls.update();
       renderer.render(scene, camera);
       animationFrameRef.current = requestAnimationFrame(animate);
@@ -1014,6 +1138,9 @@ export default function SupersetPluginChartHelloWorld(
     return () => {
       cancelAnimationFrame(animationFrameRef.current);
       renderer.domElement.removeEventListener('wheel', handleWheelZoom);
+      renderer.domElement.removeEventListener('pointerdown', handleRotateStart);
+      window.removeEventListener('pointermove', handleRotateMove);
+      window.removeEventListener('pointerup', handleRotateEnd);
       controls.dispose();
       renderer.dispose();
       if (container.contains(renderer.domElement)) {
@@ -1023,6 +1150,7 @@ export default function SupersetPluginChartHelloWorld(
       if (deviceGroupRef.current) disposeObject3D(deviceGroupRef.current);
       modelGroupRef.current = null;
       deviceGroupRef.current = null;
+      modelTransformGroupRef.current = null;
       markerMeshesRef.current = [];
       markerAnimRef.current = [];
       mixerRef.current = null;
@@ -1087,14 +1215,32 @@ export default function SupersetPluginChartHelloWorld(
     if (!renderer) return undefined;
 
     const handleClick = (event: MouseEvent) => {
+      // A click event still fires after a drag-to-rotate gesture ends
+      // (mouseup + click are both dispatched regardless of movement in
+      // between) — without this, every orbit drag that happened to start or
+      // end over a marker would also select/deselect it or drop a pin.
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
+
       if (pickTarget) {
         const hits = raycastModelAt(event.clientX, event.clientY);
         if (hits.length > 0) {
-          const p = hits[0].point;
+          // Converted into the model transform group's local space, not
+          // left as the raw world-space hit point — markers are parented
+          // under that same group (see `modelTransformGroupRef`), so
+          // storing positions in its local space is what keeps a sensor
+          // placed here moving/rotating together with the model if its
+          // Position & Orientation offset/rotation/scale changes later,
+          // instead of staying pinned to today's world coordinates.
+          const local = modelTransformGroupRef.current
+            ? modelTransformGroupRef.current.worldToLocal(hits[0].point.clone())
+            : hits[0].point;
           // Hand the position back to the sensor editor in the control
           // panel; it writes it into the scene JSON, which flows back down
           // here as new props and moves the marker (or the location pin).
-          emitPick(pickTarget.kind, pickTarget.id, [p.x, p.y, p.z] as Position3);
+          emitPick(pickTarget.kind, pickTarget.id, [local.x, local.y, local.z] as Position3);
         }
         return;
       }
@@ -1140,12 +1286,13 @@ export default function SupersetPluginChartHelloWorld(
   // Load / reload the GLB model whenever modelUrl changes.
   useEffect(() => {
     const scene = sceneRef.current;
-    if (!scene) return undefined;
+    const transformGroup = modelTransformGroupRef.current;
+    if (!scene || !transformGroup) return undefined;
 
     setModelError('');
 
     if (modelGroupRef.current) {
-      scene.remove(modelGroupRef.current);
+      transformGroup.remove(modelGroupRef.current);
       disposeObject3D(modelGroupRef.current);
       modelGroupRef.current = null;
     }
@@ -1154,11 +1301,43 @@ export default function SupersetPluginChartHelloWorld(
     // stale mixer never keeps ticking against a disposed scene graph.
     mixerRef.current = null;
 
+    // Applied to the persistent transform group, not the per-load GLTF
+    // content wrapper below — this is what keeps device markers (parented
+    // under the same group, see the marker-building effect) moving and
+    // rotating together with the model instead of staying fixed in raw
+    // world space whenever this changes.
+    const scale = sceneData?.modelScale ?? 1;
+    transformGroup.scale.setScalar(scale);
+    const [ox, oy, oz] = sceneData?.modelOffset || [0, 0, 0];
+    transformGroup.position.set(ox || 0, oy || 0, oz || 0);
+    // Fixes models that come out of their source URL facing the wrong way,
+    // on their side, or upside down (e.g. "head to the left") without
+    // needing the file itself re-exported — set in degrees from the
+    // Customize panel, applied here in radians.
+    const [rx, ry, rz] = sceneData?.modelRotation || [0, 0, 0];
+    transformGroup.rotation.set(
+      THREE.MathUtils.degToRad(rx || 0),
+      THREE.MathUtils.degToRad(ry || 0),
+      THREE.MathUtils.degToRad(rz || 0),
+    );
+
     const modelUrl = resolvedModelUrl;
     if (!modelUrl) {
       setModelWorldSize(null);
       setModelInfo(null);
       frameCameraRef.current();
+      return undefined;
+    }
+    // GLTFLoader doesn't execute anything from the URL scheme itself, but
+    // there's no legitimate reason a model URL would ever need to be
+    // anything other than http(s) — rejecting everything else outright
+    // (rather than letting the loader's fetch just fail on its own, less
+    // predictably) closes off `javascript:`/`data:`/`file:` and similar as
+    // a possible avenue entirely.
+    if (!/^https?:\/\//i.test(modelUrl)) {
+      setModelError('Model URL must start with http:// or https://');
+      setModelWorldSize(null);
+      setModelInfo(null);
       return undefined;
     }
 
@@ -1177,26 +1356,8 @@ export default function SupersetPluginChartHelloWorld(
         if (cancelled) return;
         const group = new THREE.Group();
         group.add(gltf.scene);
-        const scale = sceneData?.modelScale ?? 1;
-        group.scale.setScalar(scale);
-        if (sceneData?.modelOffset) {
-          const [ox, oy, oz] = sceneData.modelOffset;
-          group.position.set(ox || 0, oy || 0, oz || 0);
-        }
-        // Fixes models that come out of their source URL facing the wrong
-        // way, on their side, or upside down (e.g. "head to the left")
-        // without needing the file itself re-exported — set in degrees from
-        // the Customize panel, applied here in radians.
-        if (sceneData?.modelRotation) {
-          const [rx, ry, rz] = sceneData.modelRotation;
-          group.rotation.set(
-            THREE.MathUtils.degToRad(rx || 0),
-            THREE.MathUtils.degToRad(ry || 0),
-            THREE.MathUtils.degToRad(rz || 0),
-          );
-        }
         modelGroupRef.current = group;
-        scene.add(group);
+        transformGroup.add(group);
         frameCameraRef.current();
 
         // Play back whatever animation clips are baked into the GLB (rigged
@@ -1269,11 +1430,11 @@ export default function SupersetPluginChartHelloWorld(
   // measured size changes the defaults. Independent of the model load, so
   // editing a sensor never refetches the GLB.
   useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
+    const transformGroup = modelTransformGroupRef.current;
+    if (!transformGroup) return;
 
     if (deviceGroupRef.current) {
-      scene.remove(deviceGroupRef.current);
+      transformGroup.remove(deviceGroupRef.current);
       disposeObject3D(deviceGroupRef.current);
       deviceGroupRef.current = null;
     }
@@ -1295,7 +1456,12 @@ export default function SupersetPluginChartHelloWorld(
     deviceGroupRef.current = group;
     markerMeshesRef.current = newMarkers;
     markerAnimRef.current = newMarkerAnim;
-    scene.add(group);
+    // Parented under the same transform group the model uses (not the
+    // scene directly) — see `modelTransformGroupRef`'s comment — so markers
+    // placed while the model had no rotation/offset correction still move
+    // and rotate together with the model once one is set, rather than
+    // staying behind in raw, unrotated world space.
+    transformGroup.add(group);
 
     // Keep the open detail panel in sync with the rebuilt (edited) device.
     setSelectedDevice(prev =>
@@ -1729,6 +1895,44 @@ export default function SupersetPluginChartHelloWorld(
           </button>
         </div>
 
+        <div
+          role="group"
+          aria-label="Reset view and zoom"
+          style={{
+            display: 'flex',
+            border: '1px solid #cbd5e1',
+            borderRadius: 6,
+            overflow: 'hidden',
+            background: 'rgba(255,255,255,0.9)',
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Reset view"
+            title="Reset view"
+            onClick={() => frameCameraRef.current()}
+            style={{ ...navBarButtonStyle, width: 28, borderRight: '1px solid #cbd5e1' }}
+          >
+            ⟲
+          </button>
+          <button
+            type="button"
+            aria-label="Zoom out"
+            onClick={() => nudgeZoom(1.25)}
+            style={{ ...navBarButtonStyle, width: 26, borderRight: '1px solid #cbd5e1' }}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            aria-label="Zoom in"
+            onClick={() => nudgeZoom(0.8)}
+            style={{ ...navBarButtonStyle, width: 26 }}
+          >
+            +
+          </button>
+        </div>
+
         {(resolvedModelUrl || placedDevices.length > 0) && (
           <button
             type="button"
@@ -1748,113 +1952,6 @@ export default function SupersetPluginChartHelloWorld(
             {defaultViewSaved ? '✓ Saved as default' : 'Set as default'}
           </button>
         )}
-      </div>
-
-      {/* Compact navigation widget — dragging/scrolling on the canvas
-          already orbits/zooms via TrackballControls, but that's not obvious and
-          is fiddly on a trackpad. Docked to the right edge, vertically
-          centred: the one spot in this layout with nothing else in it (top
-          corners hold the header/search, top-left-under has the model/
-          location filters, both bottom corners hold the Day/Night toggle
-          and the panel nav), so it adds navigation without crowding
-          anything or covering more canvas than a ~90px-wide button
-          cluster. */}
-      <div
-        style={{
-          position: 'absolute',
-          top: '50%',
-          right: 16,
-          transform: 'translateY(-50%)',
-          zIndex: 3,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 6,
-        }}
-      >
-        <div
-          role="group"
-          aria-label="Orbit the model"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 26px)',
-            gridTemplateRows: 'repeat(3, 26px)',
-            gap: 2,
-          }}
-        >
-          <div />
-          <button
-            type="button"
-            aria-label="Orbit up"
-            onClick={() => nudgeOrbit(0, -0.25)}
-            style={navPadButtonStyle}
-          >
-            ▲
-          </button>
-          <div />
-          <button
-            type="button"
-            aria-label="Orbit left"
-            onClick={() => nudgeOrbit(-0.25, 0)}
-            style={navPadButtonStyle}
-          >
-            ◀
-          </button>
-          <button
-            type="button"
-            aria-label="Reset view"
-            onClick={() => frameCameraRef.current()}
-            style={{ ...navPadButtonStyle, fontSize: 11 }}
-          >
-            ⟲
-          </button>
-          <button
-            type="button"
-            aria-label="Orbit right"
-            onClick={() => nudgeOrbit(0.25, 0)}
-            style={navPadButtonStyle}
-          >
-            ▶
-          </button>
-          <div />
-          <button
-            type="button"
-            aria-label="Orbit down"
-            onClick={() => nudgeOrbit(0, 0.25)}
-            style={navPadButtonStyle}
-          >
-            ▼
-          </button>
-          <div />
-        </div>
-
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            border: '1px solid #cbd5e1',
-            borderRadius: 6,
-            overflow: 'hidden',
-            background: 'rgba(255,255,255,0.9)',
-          }}
-        >
-          <button
-            type="button"
-            aria-label="Zoom in"
-            onClick={() => nudgeZoom(0.8)}
-            style={{ ...navBarButtonStyle, borderBottom: '1px solid #cbd5e1' }}
-          >
-            +
-          </button>
-          <button
-            type="button"
-            aria-label="Zoom out"
-            onClick={() => nudgeZoom(1.25)}
-            style={navBarButtonStyle}
-          >
-            −
-          </button>
-        </div>
       </div>
 
       <div

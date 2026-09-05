@@ -91,6 +91,11 @@ function zoomDistanceBounds(maxDim: number | null) {
   };
 }
 
+/** Same reasoning/limit as JsonFileUploadControl's — this file has its own
+ * separate scene-file `<input type="file">` (the one in the expanded
+ * "upload a different file" section below), so it needs the same guard. */
+const MAX_SCENE_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+
 const rowStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -436,6 +441,12 @@ export default function SensorSceneControl({
   const handleFile = useCallback(
     (file: File) => {
       setError('');
+      if (file.size > MAX_SCENE_FILE_SIZE_BYTES) {
+        setError(
+          `File is too large (${Math.round(file.size / 1024 / 1024)}MB) — the limit is ${MAX_SCENE_FILE_SIZE_BYTES / 1024 / 1024}MB.`,
+        );
+        return;
+      }
       const reader = new FileReader();
       reader.onload = () => {
         const text = String(reader.result || '');

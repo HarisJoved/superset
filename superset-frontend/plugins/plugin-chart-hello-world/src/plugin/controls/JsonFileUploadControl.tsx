@@ -18,6 +18,14 @@
  */
 import { useCallback, useState } from 'react';
 
+/** Scene JSON is stored as a plain string form-data field with no
+ * server-side size enforcement of its own — without a client-side cap, a
+ * user handed (or picking, by mistake) a huge file would have it read
+ * fully into memory via FileReader, then serialized as one giant form-data
+ * value, which can hang or crash the tab well before it ever gets to
+ * `JSON.parse`. 20MB comfortably covers any realistic device/POI list. */
+const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+
 interface JsonFileUploadControlProps {
   value?: string;
   onChange?: (value: string) => void;
@@ -44,6 +52,12 @@ export default function JsonFileUploadControl({
   const handleFile = useCallback(
     (file: File) => {
       setError('');
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        setError(
+          `File is too large (${Math.round(file.size / 1024 / 1024)}MB) — the limit is ${MAX_FILE_SIZE_BYTES / 1024 / 1024}MB.`,
+        );
+        return;
+      }
       const reader = new FileReader();
       reader.onload = () => {
         const text = String(reader.result || '');

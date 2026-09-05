@@ -26,8 +26,22 @@
  * example calls we were given — not the Basic Auth documented for the
  * `app.idtcities.com` host. Both are hardcoded per those examples; there is
  * no per-tenant config for this in the chart today.
+ *
+ * SECURITY NOTE: `USER_ID` below is a real credential shipped inside this
+ * plugin's compiled JS bundle — anyone who opens devtools on a page running
+ * this chart, or reads the bundle directly, can read it out. That is an
+ * inherent limitation of calling a third-party API directly from browser
+ * code with no server in between: there is no way to keep a value truly
+ * secret once it has to be sent from the browser. The only real fix is
+ * routing these calls through a backend proxy (e.g. a small Superset REST
+ * endpoint that holds the credential server-side and this plugin calls
+ * instead of `app.snap4idtcity.com` directly) — that's a backend change
+ * outside what this frontend plugin can do on its own. Short of that, at
+ * minimum this shouldn't stay a hardcoded constant: pull it from an
+ * environment-specific config (or a control-panel field) so rotating it, or
+ * using a different value per deployment, doesn't require editing and
+ * re-shipping this file.
  */
-
 const API_BASE = 'https://app.snap4idtcity.com';
 const BROKER = 'orionIDT';
 const USER_ID = '1e6ce6bd-35bc-4aa5-9bf0-58c43a91083e';
@@ -155,6 +169,29 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 }
 
 /**
+ * `deviceId`/`modelName` go straight into the URL *path* unencoded (see the
+ * comment on `fetchLatestDeviceData` for why `encodeURIComponent` isn't an
+ * option here — it would mangle the urn's colons). That means nothing else
+ * is stopping a value containing `/`, `?`, `#`, or similar from breaking out
+ * of its intended path segment and altering which endpoint actually gets
+ * called, or smuggling extra query params in — this is the actual guard
+ * against that, checked before the value goes anywhere near a URL. Legit
+ * NGSI ids/model names (letters, digits, `-`, `_`, `:`, `.`) all pass;
+ * anything else is rejected outright rather than silently stripped, so a
+ * bad value fails loudly instead of quietly hitting the wrong endpoint.
+ */
+const SAFE_PATH_SEGMENT_RE = /^[A-Za-z0-9_:.-]+$/;
+
+function assertSafePathSegment(value: string, label: string): string {
+  if (!value || !SAFE_PATH_SEGMENT_RE.test(value)) {
+    throw new Error(
+      `${label} contains characters that can't be safely sent to the IoT gateway.`,
+    );
+  }
+  return value;
+}
+
+/**
  * Every fetch to the IoT gateway goes through this — a plain `fetch()` has
  * no timeout, so a slow or silently-hanging gateway response (which is
  * exactly what happens if it's rate-limiting a burst of concurrent
@@ -188,6 +225,7 @@ async function fetchWithTimeout(url: string, timeoutMs = REQUEST_TIMEOUT_MS): Pr
 export async function fetchLatestDeviceData(
   deviceId: string,
 ): Promise<LatestDeviceData> {
+  assertSafePathSegment(deviceId, 'Device id');
   const url = `${API_BASE}/iot-agent/context/devices/${deviceId}${buildQuery({
     broker: BROKER,
     userId: USER_ID,
@@ -264,6 +302,8 @@ export async function fetchDeviceHistory(
   options: HistoryOptions = {},
 ): Promise<HistoryResult> {
   const { from, to, latest, limit } = options;
+  assertSafePathSegment(deviceId, 'Device id');
+  assertSafePathSegment(modelName, 'Model name');
   const query = buildQuery({
     broker: BROKER,
     userId: USER_ID,
